@@ -109,6 +109,22 @@ function LoginForm() {
   return (
     <div className="relative flex min-h-screen items-center justify-center bg-black p-4">
       <AnimatedBackground />
+      {/* Floating Logo - styled like navbar for seamless UI */}
+      <div className="fixed left-1/2 top-4 z-50 w-[90%] max-w-6xl -translate-x-1/2 md:w-[75%]">
+        <Link 
+          href="/"
+          className="group block"
+        >
+          <div className="rounded-full border border-zinc-800 bg-black/60 backdrop-blur-md px-6 py-3 shadow-lg transition-all duration-300 hover:bg-black/70 hover:border-zinc-700 hover:shadow-xl cursor-pointer">
+            <span className="text-xl font-bold text-white transition-all duration-300 group-hover:text-zinc-200 md:text-2xl inline-flex items-center gap-2">
+              PromoraAI
+              <span className="text-sm opacity-0 group-hover:opacity-100 transition-opacity duration-300 text-zinc-400">
+                ← Home
+              </span>
+            </span>
+          </div>
+        </Link>
+      </div>
       <Card className="w-full max-w-md border-zinc-800 bg-zinc-950">
         <CardHeader className="space-y-1">
           <CardTitle className="text-2xl font-bold text-white">Welcome back</CardTitle>
@@ -123,7 +139,7 @@ function LoginForm() {
               <Input
                 id="email"
                 type="email"
-                placeholder="XYZ@gmail.com"
+                placeholder="JohnDoe@gmail.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -148,11 +164,18 @@ function LoginForm() {
               {isLoading ? "Signing in..." : "Sign in"}
             </Button>
           </form>
-          <div className="mt-4 text-center text-sm text-zinc-400">
-            Don't have an account?{" "}
-            <Link href="/register" className="text-white hover:underline">
-              Sign up
-            </Link>
+          <div className="mt-4 space-y-2 text-center text-sm text-zinc-400">
+            <div>
+              Don't have an account?{" "}
+              <Link href="/register" className="text-white hover:underline">
+                Sign up
+              </Link>
+            </div>
+            <div>
+              <Link href="/forgot-password" className="text-white hover:underline">
+                Forgot password?
+              </Link>
+            </div>
           </div>
         </CardContent>
       </Card>

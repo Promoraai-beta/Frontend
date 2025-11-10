@@ -230,35 +230,8 @@ export default function AssessmentPage({
     return allProblems;
   }, [assessmentTemplate, assessmentMeta]);
   
-  // Auto-set initial tab based on assessment type
+  // Start on tasks tab by default
   const [activeTab, setActiveTab] = useState<TabType>('task');
-  const [hasAutoRedirected, setHasAutoRedirected] = useState(false);
-  
-  // Auto-redirect to correct view on mount (only once)
-  useEffect(() => {
-    if (hasAutoRedirected) return; // Only redirect once
-    
-    // Wait a bit for problems to be computed
-    const timer = setTimeout(() => {
-      if (isIDEChallenge) {
-        // IDE challenge: redirect to IDE view immediately
-        console.log('🔀 Auto-redirecting to IDE view (IDE challenge detected)');
-        setActiveTab('ide');
-        setHasAutoRedirected(true);
-      } else if (isCodeChallenge) {
-        // Code challenge: redirect to code view with first problem
-        if (problems.length > 0) {
-          console.log('🔀 Auto-redirecting to Code view (Code challenge detected)');
-          setCurrentProblem(0);
-          setCode(problems[0]?.starterCode || '// Your code here\n');
-          setActiveTab('code');
-          setHasAutoRedirected(true);
-        }
-      }
-    }, 100); // Small delay to ensure problems are computed
-    
-    return () => clearTimeout(timer);
-  }, [isIDEChallenge, isCodeChallenge, problems, hasAutoRedirected]);
   
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(false); // For code view, chat history panel
   const [showTestResults, setShowTestResults] = useState(false); // Test results visibility

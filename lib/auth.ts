@@ -148,10 +148,14 @@ export async function register(
   }
 }
 
-// Logout - clear token and user data
+// Logout - clear token and user data, redirect to home
 export function logout(): void {
   removeAuthToken()
   localStorage.removeItem(AUTH_STORAGE_KEY)
+  // Redirect to home page
+  if (typeof window !== "undefined") {
+    window.location.href = "/"
+  }
 }
 
 // Get current user from storage
