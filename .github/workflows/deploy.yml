@@ -1,0 +1,155 @@
+name: Deploy Frontend to EC2
+
+# Trigger workflow
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - '**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy Frontend
+    
+    steps:
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          # Write key using printf to preserve exact format and handle special characters
+          printf '%s' "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          # Ensure file ends with newline (SSH keys should end with newline)
+          if [ "$(tail -c 1 ~/.ssh/deploy_key)" != "" ]; then
+            echo "" >> ~/.ssh/deploy_key
+          fi
+          chmod 600 ~/.ssh/deploy_key
+          # Verify key format
+          echo "Key file line count:"
+          wc -l ~/.ssh/deploy_key
+          echo "First line starts with:"
+          head -1 ~/.ssh/deploy_key | head -c 30
+          echo ""
+          echo "Last line ends with:"
+          tail -1 ~/.ssh/deploy_key | tail -c 30
+          echo ""
+          # Check for Windows line endings (CRLF) and convert to Unix (LF) if needed
+          if file ~/.ssh/deploy_key | grep -q "CRLF"; then
+            echo "Converting CRLF to LF..."
+            dos2unix ~/.ssh/deploy_key 2>/dev/null || sed -i 's/\r$//' ~/.ssh/deploy_key
+          fi
+          # Test key format
+          KEY_VALID=false
+          if ssh-keygen -l -f ~/.ssh/deploy_key > /dev/null 2>&1; then
+            echo "✅ Key format is valid (ssh-keygen)"
+            KEY_VALID=true
+          elif openssl rsa -in ~/.ssh/deploy_key -check -noout > /dev/null 2>&1; then
+            echo "✅ Key format is valid (OpenSSL RSA)"
+            KEY_VALID=true
+          elif openssl pkey -in ~/.ssh/deploy_key -check -noout > /dev/null 2>&1; then
+            echo "✅ Key format is valid (OpenSSL generic)"
+            KEY_VALID=true
+          fi
+          
+          if [ "$KEY_VALID" = false ]; then
+            echo "❌ Key format validation failed"
+            echo "Checking key file content..."
+            # Check for BEGIN/END markers
+            if grep -q "^-----BEGIN" ~/.ssh/deploy_key && grep -q "^-----END" ~/.ssh/deploy_key; then
+              echo "✅ BEGIN/END markers present"
+            else
+              echo "❌ BEGIN/END markers missing or malformed"
+              echo "First line: $(head -1 ~/.ssh/deploy_key)"
+              echo "Last line: $(tail -1 ~/.ssh/deploy_key)"
+            fi
+            # Try to identify key type
+            if head -1 ~/.ssh/deploy_key | grep -q "BEGIN.*PRIVATE KEY"; then
+              echo "Key type detected: $(head -1 ~/.ssh/deploy_key)"
+            fi
+            exit 1
+          fi
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+      
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Create deployment script
+        run: |
+          cat > /tmp/ci-deploy.sh << 'EOF'
+          #!/bin/bash
+          set -e
+          set +e
+          cd /opt/promora
+          SERVICE="${1:-all}"
+          echo "Deploying service: $SERVICE"
+          echo ""
+          echo "Checking for code updates..."
+          if [ "$SERVICE" = "frontend" ] || [ "$SERVICE" = "all" ]; then
+            if [ -d "Frontend/.git" ]; then
+              cd Frontend && git pull origin main 2>/dev/null || git pull origin master 2>/dev/null || true
+              cd ..
+            else
+              echo "⚠️  Frontend is not a git repository - rebuilding from existing files"
+            fi
+          fi
+          if [ "$SERVICE" = "backend" ] || [ "$SERVICE" = "all" ]; then
+            if [ -d "Backend/.git" ]; then
+              cd Backend && git pull origin main 2>/dev/null || git pull origin master 2>/dev/null || true
+              cd ..
+            else
+              echo "⚠️  Backend is not a git repository - rebuilding from existing files"
+            fi
+          fi
+          if [ "$SERVICE" = "mcp" ] || [ "$SERVICE" = "all" ]; then
+            if [ -d "MCP-Servers/.git" ]; then
+              cd MCP-Servers && git pull origin main 2>/dev/null || git pull origin master 2>/dev/null || true
+              cd ..
+            else
+              echo "⚠️  MCP-Servers is not a git repository - rebuilding from existing files"
+            fi
+          fi
+          set -e
+          echo ""
+          echo "Fetching environment from AWS SSM..."
+          export AWS_REGION=us-east-2
+          export SSM_PREFIX=/
+          source scripts/fetch-env-from-ssm.sh
+          echo ""
+          echo "Deploying containers..."
+          if [ "$SERVICE" = "backend" ]; then
+            docker compose up -d --build backend
+          elif [ "$SERVICE" = "frontend" ]; then
+            docker compose up -d --build frontend
+          elif [ "$SERVICE" = "mcp" ]; then
+            docker compose up -d --build mcp-server-a mcp-server-b mcp-server-c
+          else
+            docker compose up -d --build
+          fi
+          echo ""
+          echo "✅ Deployment complete!"
+          docker compose ps
+          EOF
+      
+      - name: Deploy to EC2
+        run: |
+          # Copy deployment script to EC2
+          scp -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=no \
+              /tmp/ci-deploy.sh ubuntu@${{ secrets.EC2_HOST }}:/opt/promora/scripts/ci-deploy.sh
+          
+          # Copy Frontend app directory to EC2
+          scp -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=no \
+              -r app/ ubuntu@${{ secrets.EC2_HOST }}:/opt/promora/Frontend/
+          
+          # Run deployment
+          ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=~/.ssh/known_hosts \
+              -o BatchMode=yes \
+              ubuntu@${{ secrets.EC2_HOST }} << 'EOF'
+            cd /opt/promora
+            chmod +x scripts/ci-deploy.sh
+            ./scripts/ci-deploy.sh frontend
+          EOF
+
