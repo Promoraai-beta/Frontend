@@ -592,13 +592,7 @@ export default function MyAssessmentsPage() {
                       <Button className="bg-white text-black hover:bg-zinc-200">Continue</Button>
                     </Link>
                   )}
-                  {assessment.status === "completed" && (
-                    <Link href={`/candidate/results/${assessment.id}`}>
-                      <Button variant="outline" className="border-white/10 bg-transparent text-zinc-400 hover:bg-white/5">
-                        View Results
-                      </Button>
-                    </Link>
-                  )}
+                  {/* View Results removed - only available in Reports section */}
                 </div>
               </div>
             </motion.div>

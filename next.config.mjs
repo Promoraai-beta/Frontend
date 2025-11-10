@@ -18,12 +18,11 @@ const nextConfig = {
   },
   // Suppress console messages in production
   reactStrictMode: true,
-  // Remove ALL console.log, console.info, console.debug in production
+  // Remove ALL console methods in production (log, info, debug, warn, error)
   // This removes them at build time from ALL code (including bundles)
+  // No console output will be visible in production builds
   compiler: {
-    removeConsole: process.env.NODE_ENV === 'production' ? {
-      exclude: ['error', 'warn'], // Keep errors and warnings, remove log/info/debug
-    } : false,
+    removeConsole: process.env.NODE_ENV === 'production' ? true : false,
   },
   async headers() {
     return [

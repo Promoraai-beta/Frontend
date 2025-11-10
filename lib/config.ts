@@ -1,5 +1,9 @@
 // Backend API configuration
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001';
+// Use relative paths to hide backend URL from client
+// Next.js API routes will proxy these to the backend
+// If NEXT_PUBLIC_API_URL is set, it will be used (for backward compatibility)
+// Otherwise, use empty string for relative paths (recommended)
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
 export const API_ENDPOINTS = {
   sessions: `${API_BASE_URL}/api/sessions`,
@@ -11,6 +15,9 @@ export const API_ENDPOINTS = {
   aiInteractions: `${API_BASE_URL}/api/ai-interactions`,
   liveMonitoring: `${API_BASE_URL}/api/live-monitoring`,
 };
+
+// Admin/Support email for contact links
+export const ADMIN_EMAIL = process.env.NEXT_PUBLIC_ADMIN_EMAIL || 'admin@promora.ai';
 
 // StackBlitz WebContainer configuration
 // API key should be set in .env.local as NEXT_PUBLIC_STACKBLITZ_API_KEY

@@ -185,7 +185,7 @@ export default function StackBlitzIDE({
             name: part,
             path: currentPath,
             type: isDirectory ? 'directory' : 'file',
-            expanded: true,
+            expanded: false, // Folders collapsed by default
             children: []
           };
           
@@ -221,7 +221,7 @@ export default function StackBlitzIDE({
               name: part,
               path: currentPath,
               type: 'directory',
-              expanded: true,
+              expanded: false, // Folders collapsed by default
               children: []
             };
             
