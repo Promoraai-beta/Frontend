@@ -137,10 +137,16 @@ jobs:
               -o StrictHostKeyChecking=no \
               /tmp/ci-deploy.sh ubuntu@${{ secrets.EC2_HOST }}:/opt/promora/scripts/ci-deploy.sh
           
-          # Copy Frontend app directory to EC2
+          # Copy Frontend app, components, and lib directories to EC2
           scp -i ~/.ssh/deploy_key \
               -o StrictHostKeyChecking=no \
               -r app/ ubuntu@${{ secrets.EC2_HOST }}:/opt/promora/Frontend/
+          scp -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=no \
+              -r components/ ubuntu@${{ secrets.EC2_HOST }}:/opt/promora/Frontend/
+          scp -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=no \
+              -r lib/ ubuntu@${{ secrets.EC2_HOST }}:/opt/promora/Frontend/
           
           # Run deployment
           ssh -i ~/.ssh/deploy_key \
