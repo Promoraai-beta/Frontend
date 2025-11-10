@@ -6,7 +6,9 @@
     "build": "next build",
     "dev": "next dev",
     "lint": "eslint .",
-    "start": "next start"
+    "start": "node .next/standalone/server.js",
+    "start:dev": "next dev",
+    "start:prod": "NODE_ENV=production node .next/standalone/server.js"
   },
   "dependencies": {
     "@emotion/is-prop-valid": "latest",

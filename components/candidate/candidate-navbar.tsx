@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
-import { LogOut, Menu, X, User } from "lucide-react"
+import { LogOut, Menu, X, User, Sparkles } from "lucide-react"
 import { useRouter, usePathname } from "next/navigation"
 import { logout } from "@/lib/auth"
 import { useAuth } from "@/components/auth-provider"
@@ -95,7 +95,13 @@ export function CandidateNavbar() {
         >
           <div className="flex items-center justify-between">
             {/* Logo on left */}
-            <button onClick={() => router.push("/candidate")} className="text-xl font-bold text-white md:text-2xl">
+            <button
+              onClick={() => router.push("/candidate")}
+              className="flex items-center gap-2 text-xl font-bold text-white md:text-2xl"
+            >
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-white via-zinc-200 to-zinc-400 shadow-lg shadow-white/10">
+                <Sparkles className="h-4 w-4 text-black" />
+              </div>
               PromoraAI
             </button>
 
