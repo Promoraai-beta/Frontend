@@ -118,11 +118,11 @@ export default function CandidateDashboard() {
 
   if (loading) {
     return (
-      <div className="relative min-h-screen bg-black">
+      <div className="relative min-h-screen bg-background">
         <AnimatedBackground />
         <CandidateNavbar />
         <main className="container mx-auto px-4 py-8 pt-20 md:pt-24 lg:pt-28 flex items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-white" />
+          <Loader2 className="h-8 w-8 animate-spin text-foreground" />
         </main>
       </div>
     )
@@ -130,7 +130,7 @@ export default function CandidateDashboard() {
 
   return (
     <ProtectedRoute requiredRole="candidate">
-      <div className="relative min-h-screen bg-black">
+      <div className="relative min-h-screen bg-background">
         <AnimatedBackground />
 
         <CandidateNavbar />
@@ -143,14 +143,14 @@ export default function CandidateDashboard() {
           animate={{ opacity: 1, y: 0 }}
           className="mb-8"
         >
-          <Card className="border-zinc-800/50 bg-gradient-to-br from-zinc-900/90 via-zinc-950/90 to-zinc-900/90 backdrop-blur-xl shadow-2xl overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 via-transparent to-zinc-900/50" />
+          <Card className="border-border bg-card/95 backdrop-blur-xl shadow-2xl overflow-hidden dark:bg-gradient-to-br dark:from-card dark:via-card dark:to-card">
+            <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 via-transparent to-muted/30" />
             <CardContent className="relative p-6 md:p-8">
               <div className="flex flex-col md:flex-row items-start md:items-center gap-6">
                 {/* Profile Avatar */}
                 <div className="relative group flex-shrink-0">
-                  <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/20 to-zinc-500/20 rounded-full blur-xl group-hover:blur-2xl transition-all duration-300" />
-                  <div className="relative h-24 w-24 md:h-32 md:w-32 rounded-full border-4 border-zinc-700/50 bg-zinc-900 overflow-hidden shadow-2xl">
+                  <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/20 to-muted rounded-full blur-xl group-hover:blur-2xl transition-all duration-300" />
+                  <div className="relative h-24 w-24 md:h-32 md:w-32 rounded-full border-4 border-border bg-muted overflow-hidden shadow-2xl">
                     {profile?.avatar && !imageError ? (
               <img
                 src={profile.avatar}
@@ -182,8 +182,8 @@ export default function CandidateDashboard() {
                 }}
               />
             ) : (
-                      <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-zinc-800 to-zinc-900">
-                        <User className="h-12 w-12 md:h-16 md:w-16 text-zinc-500" />
+                      <div className="flex h-full w-full items-center justify-center bg-muted">
+                        <User className="h-12 w-12 md:h-16 md:w-16 text-muted-foreground" />
               </div>
             )}
           </div>
@@ -192,21 +192,21 @@ export default function CandidateDashboard() {
                 {/* Profile Info */}
                 <div className="flex-1 min-w-0 space-y-3">
           <div className="flex-1 min-w-0">
-                    <h1 className="mb-2 text-3xl md:text-4xl font-bold text-white truncate">
+                    <h1 className="mb-2 text-3xl md:text-4xl font-bold text-foreground truncate">
                       {profile?.name || user?.name || "Candidate"}
                     </h1>
                     
                     {/* Title and Location */}
                     <div className="flex flex-wrap items-center gap-4 mb-3">
                       {profile?.title && (
-                        <div className="flex items-center gap-2 text-zinc-300">
-                          <Briefcase className="h-4 w-4 text-zinc-400" />
+                        <div className="flex items-center gap-2 text-muted-foreground">
+                          <Briefcase className="h-4 w-4 text-muted-foreground" />
                           <span className="text-sm md:text-base">{profile.title}</span>
                         </div>
                       )}
                       {profile?.location && (
-                        <div className="flex items-center gap-2 text-zinc-300">
-                          <MapPin className="h-4 w-4 text-zinc-400" />
+                        <div className="flex items-center gap-2 text-muted-foreground">
+                          <MapPin className="h-4 w-4 text-muted-foreground" />
                           <span className="text-sm md:text-base">{profile.location}</span>
                         </div>
                       )}
@@ -222,7 +222,7 @@ export default function CandidateDashboard() {
 
                     {/* Bio */}
                     {profile?.bio && (
-                      <p className="text-sm md:text-base text-zinc-300 leading-relaxed line-clamp-2">
+                      <p className="text-sm md:text-base text-muted-foreground leading-relaxed line-clamp-2">
                         {profile.bio}
                       </p>
                     )}
@@ -242,7 +242,7 @@ export default function CandidateDashboard() {
                           </span>
                         ))}
                         {profile.skills.length > 5 && (
-                          <span className="px-3 py-1 bg-zinc-800 text-zinc-400 rounded-lg text-xs md:text-sm border border-zinc-700">
+                          <span className="px-3 py-1 bg-muted text-muted-foreground rounded-lg text-xs md:text-sm border border-border">
                             +{profile.skills.length - 5} more
                           </span>
                         )}
@@ -260,7 +260,7 @@ export default function CandidateDashboard() {
                           </span>
                         ))}
                         {profile.interests.length > 3 && (
-                          <span className="px-3 py-1 bg-zinc-800 text-zinc-400 rounded-lg text-xs md:text-sm border border-zinc-700">
+                          <span className="px-3 py-1 bg-muted text-muted-foreground rounded-lg text-xs md:text-sm border border-border">
                             +{profile.interests.length - 3} more
                           </span>
                         )}
@@ -275,7 +275,7 @@ export default function CandidateDashboard() {
                     <Trophy className="h-6 w-6 md:h-7 md:w-7" />
                     <span className="text-3xl md:text-4xl font-bold">{stats.totalPoints.toLocaleString()}</span>
             </div>
-            <p className="text-sm text-zinc-400">Total Points</p>
+            <p className="text-sm text-muted-foreground">Total Points</p>
                   {stats.level && (
                     <div className="mt-2 px-3 py-1 bg-emerald-500/10 text-emerald-300 rounded-lg text-xs md:text-sm border border-emerald-500/30 inline-block">
                       {stats.level}

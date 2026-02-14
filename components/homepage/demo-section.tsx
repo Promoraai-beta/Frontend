@@ -20,7 +20,7 @@ export function DemoSection() {
       <div className="container mx-auto px-4">
         <motion.div style={{ scale, opacity }} className="mx-auto max-w-5xl">
           <div className="mb-12 text-center">
-            <h2 className="mb-4 text-4xl font-bold text-white md:text-5xl lg:text-6xl">
+            <h2 className="mb-4 font-serif text-4xl font-bold text-white md:text-5xl lg:text-6xl">
               <span className="text-balance">See it in action</span>
             </h2>
             <p className="mx-auto max-w-2xl text-pretty text-lg text-zinc-400">
@@ -28,17 +28,17 @@ export function DemoSection() {
             </p>
           </div>
 
-          <div className="group relative aspect-video overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950">
-            <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-zinc-900 to-black">
+          <div className="group relative aspect-video overflow-hidden rounded-2xl border border-zinc-700/50 bg-zinc-950/80 shadow-[0_0_60px_-20px_rgba(52,211,153,0.15)] ring-1 ring-white/5">
+            <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-zinc-900/98 to-black/98">
               <Button
                 size="lg"
-                className="h-20 w-20 rounded-full bg-white text-black transition-transform hover:scale-110 hover:bg-zinc-200"
+                className="h-20 w-20 rounded-full bg-white text-black shadow-xl shadow-white/25 transition-all hover:scale-110 hover:bg-emerald-50 hover:shadow-emerald-500/20"
               >
-                <Play className="h-8 w-8 fill-current" />
+                <Play className="h-8 w-8 fill-current pl-1" />
               </Button>
             </div>
             {/* Placeholder for demo video */}
-            <div className="absolute inset-0 bg-[url('/general-dashboard-interface.png')] bg-cover bg-center opacity-20" />
+            <div className="absolute inset-0 bg-[url('/general-dashboard-interface.png')] bg-cover bg-center opacity-25" />
           </div>
         </motion.div>
       </div>

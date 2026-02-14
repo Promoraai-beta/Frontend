@@ -30,8 +30,23 @@ const nextConfig = {
     return [
       {
         // Enable cross-origin isolation required for SharedArrayBuffer/WebContainer
-        // Apply COEP only to assessment routes that use WebContainer
+        // Both COOP + COEP are required for crossOriginIsolated (SharedArrayBuffer)
+        source: '/assessment',
+        headers: [
+          { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
+          { key: 'Cross-Origin-Embedder-Policy', value: 'require-corp' },
+        ],
+      },
+      {
         source: '/assessment/:path*',
+        headers: [
+          { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
+          { key: 'Cross-Origin-Embedder-Policy', value: 'require-corp' },
+        ],
+      },
+      {
+        // IDE sandbox / test page — needs same cross-origin isolation as assessment
+        source: '/test-ide',
         headers: [
           { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
           { key: 'Cross-Origin-Embedder-Policy', value: 'require-corp' },

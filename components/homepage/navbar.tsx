@@ -4,6 +4,7 @@ import { useState, useEffect } from "react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Menu, X, LogIn, Sparkles } from "lucide-react"
+import { ThemeToggle } from "@/components/theme-toggle"
 import { motion, AnimatePresence } from "framer-motion"
 
 export function Navbar() {
@@ -27,15 +28,17 @@ export function Navbar() {
         className="fixed left-1/2 top-4 z-50 w-[90%] max-w-6xl -translate-x-1/2 md:w-[75%]"
       >
         <div
-          className={`rounded-full border border-zinc-800 px-6 py-3 transition-all duration-300 ${
-            isScrolled ? "bg-black/80 backdrop-blur-lg shadow-lg" : "bg-black/60 backdrop-blur-md"
+          className={`rounded-full border border-border px-6 py-3 transition-all duration-300 ${
+            isScrolled
+              ? "bg-background/80 shadow-xl backdrop-blur-xl"
+              : "bg-background/60 backdrop-blur-xl"
           }`}
         >
           <div className="flex items-center justify-between">
             {/* Logo on left */}
-            <Link href="/" className="flex items-center gap-2 text-xl font-bold text-white md:text-2xl">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-white via-zinc-200 to-zinc-400 shadow-lg shadow-white/10">
-                <Sparkles className="h-4 w-4 text-black" />
+            <Link href="/" className="flex items-center gap-2 text-xl font-bold text-foreground md:text-2xl">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-primary/80 shadow-lg">
+                <Sparkles className="h-4 w-4 text-primary-foreground" />
               </div>
               PromoraAI
             </Link>
@@ -44,37 +47,45 @@ export function Navbar() {
             <div className="hidden items-center gap-8 md:flex">
               <Link
                 href="#demo"
-                className="text-zinc-400 transition-colors hover:text-white"
+                className="text-muted-foreground transition-colors hover:text-foreground"
                 style={{ fontSize: "0.9375rem" }}
               >
                 Demo
               </Link>
               <Link
                 href="#features"
-                className="text-zinc-400 transition-colors hover:text-white"
+                className="text-muted-foreground transition-colors hover:text-foreground"
                 style={{ fontSize: "0.9375rem" }}
               >
                 Features
               </Link>
               <Link
-                href="#testimonials"
-                className="text-zinc-400 transition-colors hover:text-white"
+                href="#compare"
+                className="text-muted-foreground transition-colors hover:text-foreground"
                 style={{ fontSize: "0.9375rem" }}
               >
-                Testimonials
+                Compare
               </Link>
               <Link
-                href="#contact"
-                className="text-zinc-400 transition-colors hover:text-white"
+                href="/pricing"
+                className="text-muted-foreground transition-colors hover:text-foreground"
                 style={{ fontSize: "0.9375rem" }}
               >
-                Contact
+                Pricing
+              </Link>
+              <Link
+                href="#faq"
+                className="text-muted-foreground transition-colors hover:text-foreground"
+                style={{ fontSize: "0.9375rem" }}
+              >
+                FAQ
               </Link>
             </div>
 
             {/* Login button with icon on right */}
-            <div className="hidden items-center md:flex">
-              <Button asChild variant="ghost" size="sm" className="gap-2 text-white hover:bg-zinc-900 hover:text-white">
+            <div className="hidden items-center gap-2 md:flex">
+              <ThemeToggle variant="ghost" size="icon" className="shrink-0" />
+              <Button asChild variant="ghost" size="sm" className="gap-2 text-foreground hover:bg-muted hover:text-foreground">
                 <Link href="/login">
                   <LogIn className="h-4 w-4" />
                   Login
@@ -83,7 +94,7 @@ export function Navbar() {
             </div>
 
             {/* Mobile Menu Button */}
-            <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="text-white md:hidden">
+            <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="text-foreground md:hidden">
               {isMobileMenuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
             </button>
           </div>
@@ -97,39 +108,47 @@ export function Navbar() {
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="fixed left-1/2 top-20 z-40 w-[90%] -translate-x-1/2 rounded-2xl border border-zinc-800 bg-black/95 p-6 backdrop-blur-lg md:hidden"
+            className="fixed left-1/2 top-20 z-40 w-[90%] -translate-x-1/2 rounded-2xl border border-border bg-background/95 p-6 backdrop-blur-lg md:hidden"
           >
             <div className="space-y-4">
               <Link
                 href="#demo"
-                className="block text-zinc-400 transition-colors hover:text-white"
+                className="block text-muted-foreground transition-colors hover:text-foreground"
                 onClick={() => setIsMobileMenuOpen(false)}
               >
                 Demo
               </Link>
               <Link
                 href="#features"
-                className="block text-zinc-400 transition-colors hover:text-white"
+                className="block text-muted-foreground transition-colors hover:text-foreground"
                 onClick={() => setIsMobileMenuOpen(false)}
               >
                 Features
               </Link>
               <Link
-                href="#testimonials"
-                className="block text-zinc-400 transition-colors hover:text-white"
+                href="#compare"
+                className="block text-muted-foreground transition-colors hover:text-foreground"
                 onClick={() => setIsMobileMenuOpen(false)}
               >
-                Testimonials
+                Compare
               </Link>
               <Link
-                href="#contact"
-                className="block text-zinc-400 transition-colors hover:text-white"
+                href="/pricing"
+                className="block text-muted-foreground transition-colors hover:text-foreground"
                 onClick={() => setIsMobileMenuOpen(false)}
               >
-                Contact
+                Pricing
               </Link>
-              <div className="pt-4">
-                <Button asChild className="w-full gap-2 bg-white text-black hover:bg-zinc-200">
+              <Link
+                href="#faq"
+                className="block text-muted-foreground transition-colors hover:text-foreground"
+                onClick={() => setIsMobileMenuOpen(false)}
+              >
+                FAQ
+              </Link>
+              <div className="flex gap-2 pt-4">
+                <ThemeToggle variant="ghost" size="icon" className="shrink-0" />
+                <Button asChild className="flex-1 gap-2">
                   <Link href="/login">
                     <LogIn className="h-4 w-4" />
                     Login

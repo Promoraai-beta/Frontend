@@ -9,15 +9,19 @@ interface Skill {
 }
 
 interface SkillProgressProps {
-  skills: Skill[]
+  skills: (Skill | string)[]
 }
 
 export function SkillProgress({ skills }: SkillProgressProps) {
+  const normalizedSkills = skills.map((s) =>
+    typeof s === "string" ? { name: s, level: 50, assessments: 0 } : s
+  )
+
   return (
-    <div className="rounded-xl border border-white/10 bg-black/40 p-6 backdrop-blur-sm">
-      <h3 className="mb-6 text-xl font-bold text-white">Skill Levels</h3>
+    <div className="rounded-xl border border-border bg-card/80 p-6 backdrop-blur-sm">
+      <h3 className="mb-6 text-xl font-bold text-foreground">Skill Levels</h3>
       <div className="space-y-6">
-        {skills.map((skill, index) => (
+        {normalizedSkills.map((skill, index) => (
           <motion.div
             key={`${skill.name}-${index}`}
             initial={{ opacity: 0, y: 20 }}
@@ -25,12 +29,14 @@ export function SkillProgress({ skills }: SkillProgressProps) {
             transition={{ duration: 0.4, delay: index * 0.1 }}
           >
             <div className="mb-2 flex items-center justify-between">
-              <span className="font-medium text-white">{skill.name}</span>
-              <span className="text-sm text-zinc-400">
-                Level {skill.level} · {skill.assessments} assessments
-              </span>
+              <span className="font-medium text-foreground">{skill.name}</span>
+              {skill.assessments > 0 && (
+                <span className="text-sm text-muted-foreground">
+                  Level {skill.level} · {skill.assessments} assessments
+                </span>
+              )}
             </div>
-            <div className="relative h-2 overflow-hidden rounded-full bg-white/10">
+            <div className="relative h-2 overflow-hidden rounded-full bg-muted">
               <motion.div
                 initial={{ width: 0 }}
                 animate={{ width: `${skill.level}%` }}

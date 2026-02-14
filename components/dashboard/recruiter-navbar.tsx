@@ -8,6 +8,7 @@ import { logout } from "@/lib/auth"
 import { useAuth } from "@/components/auth-provider"
 import { motion, AnimatePresence } from "framer-motion"
 import { NotificationsDrawer } from "@/components/dashboard/notifications-drawer"
+import { ThemeToggle } from "@/components/theme-toggle"
 import { api } from "@/lib/api"
 import Image from "next/image"
 
@@ -81,18 +82,18 @@ export function RecruiterNavbar() {
         className="fixed left-1/2 top-4 z-50 w-[90%] max-w-6xl -translate-x-1/2 md:w-[75%]"
       >
         <div
-          className={`rounded-full border border-zinc-800 px-6 py-3 transition-all duration-300 ${
-            isScrolled ? "bg-black/80 backdrop-blur-lg shadow-lg" : "bg-black/60 backdrop-blur-md"
+          className={`rounded-full border border-border px-6 py-3 transition-all duration-300 ${
+            isScrolled ? "bg-background/80 backdrop-blur-lg shadow-lg" : "bg-background/60 backdrop-blur-md"
           }`}
         >
           <div className="flex items-center justify-between">
             {/* Logo on left */}
             <button
               onClick={() => router.push("/dashboard")}
-              className="flex items-center gap-2 text-xl font-bold text-white md:text-2xl"
+              className="flex items-center gap-2 text-xl font-bold text-foreground md:text-2xl"
             >
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-white via-zinc-200 to-zinc-400 shadow-lg shadow-white/10">
-                <Sparkles className="h-4 w-4 text-black" />
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-primary/80 shadow-lg">
+                <Sparkles className="h-4 w-4 text-primary-foreground" />
               </div>
               PromoraAI
             </button>
@@ -102,7 +103,7 @@ export function RecruiterNavbar() {
               <button
                 onClick={() => router.push("/dashboard")}
                 className={`text-sm transition-colors ${
-                  pathname === "/dashboard" ? "text-white" : "text-zinc-400 hover:text-white"
+                  pathname === "/dashboard" ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 Dashboard
@@ -110,7 +111,7 @@ export function RecruiterNavbar() {
               <button
                 onClick={() => router.push("/dashboard/candidates")}
                 className={`text-sm transition-colors ${
-                  pathname.startsWith("/dashboard/candidates") ? "text-white" : "text-zinc-400 hover:text-white"
+                  pathname.startsWith("/dashboard/candidates") ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 Candidates
@@ -119,9 +120,10 @@ export function RecruiterNavbar() {
 
             {/* User info and logout on right */}
             <div className="hidden items-center gap-2 md:flex">
+              <ThemeToggle variant="ghost" size="icon" className="shrink-0" />
               <button
                 onClick={() => setShowNotifications(true)}
-                className="relative rounded-full p-2 text-white transition-colors hover:bg-zinc-900"
+                className="relative rounded-full p-2 text-foreground transition-colors hover:bg-muted"
               >
                 <Bell className="h-5 w-5" />
                 <span className="absolute right-1 top-1 flex h-2 w-2">
@@ -131,7 +133,7 @@ export function RecruiterNavbar() {
               </button>
               <button
                 onClick={() => router.push("/dashboard/profile")}
-                className="relative h-9 w-9 rounded-full overflow-hidden border-2 border-zinc-700 bg-zinc-900 transition-colors hover:border-zinc-600"
+                className="relative h-9 w-9 rounded-full overflow-hidden border-2 border-border bg-muted transition-colors hover:border-muted-foreground/50"
                 title={user?.name || "Profile"}
               >
                 {recruiterAvatar ? (
@@ -144,7 +146,7 @@ export function RecruiterNavbar() {
                   />
                 ) : (
                   <div className="flex h-full w-full items-center justify-center">
-                    <User className="h-5 w-5 text-zinc-400" />
+                    <User className="h-5 w-5 text-muted-foreground" />
                   </div>
                 )}
               </button>
@@ -152,7 +154,7 @@ export function RecruiterNavbar() {
                 onClick={handleLogout}
                 variant="ghost"
                 size="sm"
-                className="gap-2 text-white hover:bg-zinc-900 hover:text-white"
+                className="gap-2 text-foreground hover:bg-muted hover:text-foreground"
               >
                 <LogOut className="h-4 w-4" />
                 Logout
@@ -160,7 +162,7 @@ export function RecruiterNavbar() {
             </div>
 
             {/* Mobile Menu Button */}
-            <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="text-white md:hidden">
+            <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="text-foreground md:hidden">
               {isMobileMenuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
             </button>
           </div>
@@ -174,7 +176,7 @@ export function RecruiterNavbar() {
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="fixed left-1/2 top-20 z-40 w-[90%] -translate-x-1/2 rounded-2xl border border-zinc-800 bg-black/95 p-6 backdrop-blur-lg md:hidden"
+            className="fixed left-1/2 top-20 z-40 w-[90%] -translate-x-1/2 rounded-2xl border border-border bg-background/95 p-6 backdrop-blur-lg md:hidden"
           >
             <div className="space-y-4">
               <button
@@ -183,7 +185,7 @@ export function RecruiterNavbar() {
                   setIsMobileMenuOpen(false)
                 }}
                 className={`block w-full text-left transition-colors ${
-                  pathname === "/dashboard" ? "text-white" : "text-zinc-400 hover:text-white"
+                  pathname === "/dashboard" ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 Dashboard
@@ -194,14 +196,17 @@ export function RecruiterNavbar() {
                   setIsMobileMenuOpen(false)
                 }}
                 className={`block w-full text-left transition-colors ${
-                  pathname.startsWith("/dashboard/candidates") ? "text-white" : "text-zinc-400 hover:text-white"
+                  pathname.startsWith("/dashboard/candidates") ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 Candidates
               </button>
-              <div className="border-t border-zinc-800 pt-4">
-                <p className="mb-2 text-sm text-zinc-400">{user?.name}</p>
-                <Button onClick={handleLogout} className="w-full gap-2 bg-white text-black hover:bg-zinc-200">
+              <div className="flex gap-2 pt-2">
+                <ThemeToggle variant="ghost" size="icon" className="shrink-0" />
+              </div>
+              <div className="border-t border-border pt-4">
+                <p className="mb-2 text-sm text-muted-foreground">{user?.name}</p>
+                <Button onClick={handleLogout} className="w-full gap-2">
                   <LogOut className="h-4 w-4" />
                   Logout
                 </Button>

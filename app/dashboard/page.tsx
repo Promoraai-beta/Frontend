@@ -188,7 +188,7 @@ export default function DashboardPage() {
 
   return (
     <ProtectedRoute requiredRole="recruiter">
-      <div className="relative min-h-screen bg-black">
+      <div className="relative min-h-screen bg-background">
         <AnimatedBackground />
 
         <RecruiterNavbar />
@@ -235,7 +235,7 @@ export default function DashboardPage() {
                           </Button>
                         </div>
                         <div className="flex gap-2 flex-wrap">
-                          <div className="flex gap-1 border border-zinc-800 rounded-lg p-1 bg-zinc-900/50">
+                          <div className="flex gap-1 border border-border rounded-lg p-1 bg-muted/50">
                             <Button
                               variant={activeFilter === "all" ? "default" : "ghost"}
                               size="sm"

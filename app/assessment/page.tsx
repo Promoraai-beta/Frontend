@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { formatDistanceToNow } from 'date-fns';
 import { getLLMService, isLLMAvailable, getAvailableLLMs } from '@/lib/llm';
@@ -36,6 +36,8 @@ const MonacoEditor = dynamic(() => import('@monaco-editor/react'), {
   ssr: false,
   loading: () => <div className="flex items-center justify-center h-full">Loading editor...</div>
 });
+
+import type { StackBlitzIDEHandle } from '@/components/assessment/StackBlitzIDE';
 
 // Dynamically import StackBlitzIDE for template-based assessments
 const StackBlitzIDE = dynamic(() => import('@/components/assessment/StackBlitzIDE'), {
@@ -85,6 +87,7 @@ export default function AssessmentPage({
   
   // Editor reference for tracking
   const editorRef = useRef<any>(null);
+  const ideRef = useRef<StackBlitzIDEHandle>(null);
   
   // Use session data if available, otherwise defaults
   const initialTimeLimit = sessionData?.time_limit 
@@ -1736,31 +1739,59 @@ export default function AssessmentPage({
     setShowSubmitModal(false);
     
     try {
-      const problem = problems[currentProblem];
-      const allTestCases = (problem as any).testCases || [];
-      
-      const response = await fetch(`${API_BASE_URL}/api/submit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          code,
-          language,
-          problemId: problem.id,
-          sessionId: sessionData?.id || null,
-          testCases: allTestCases
-        })
-      });
+      if (isIDEChallenge) {
+        // ── IDE challenge: collect all files from WebContainer and save ──
+        let allFiles: Record<string, string> = {};
+        try {
+          if (ideRef.current) {
+            allFiles = await ideRef.current.getAllFiles();
+          }
+        } catch (e) {
+          console.warn('Could not collect IDE files:', e);
+        }
 
-      const data = await response.json();
-      
-      if (data.success && data.submission) {
-        setSubmissionResult(data.submission);
-        setShowTestResults(true);
-        setTestResults(data.submission.testResults);
-        // Note: Don't stop recording or end session here - let user continue or explicitly end session
-        alert('Problem submitted successfully! You can continue working or end the session.');
+        const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionData?.id}/submit-files`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId: sessionData?.id,
+            finalCode: JSON.stringify(allFiles),
+          }),
+        });
+
+        const data = await response.json();
+        if (data.success) {
+          alert('Assessment submitted successfully! You can continue working or end the session.');
+        } else {
+          alert(`Submission failed: ${data.error || 'Unknown error'}`);
+        }
       } else {
-        alert(`Submission failed: ${data.error || 'Unknown error'}`);
+        // ── Code challenge: existing flow ──
+        const problem = problems[currentProblem];
+        const allTestCases = (problem as any).testCases || [];
+        
+        const response = await fetch(`${API_BASE_URL}/api/submit`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            code,
+            language,
+            problemId: problem.id,
+            sessionId: sessionData?.id || null,
+            testCases: allTestCases
+          })
+        });
+
+        const data = await response.json();
+        
+        if (data.success && data.submission) {
+          setSubmissionResult(data.submission);
+          setShowTestResults(true);
+          setTestResults(data.submission.testResults);
+          alert('Problem submitted successfully! You can continue working or end the session.');
+        } else {
+          alert(`Submission failed: ${data.error || 'Unknown error'}`);
+        }
       }
     } catch (error: any) {
       console.error('Submission error:', error);
@@ -1784,9 +1815,23 @@ export default function AssessmentPage({
         return;
       }
 
+      // Collect IDE files before ending (if IDE challenge)
+      let finalCode: string | undefined;
+      if (isIDEChallenge && ideRef.current) {
+        try {
+          const allFiles = await ideRef.current.getAllFiles();
+          if (Object.keys(allFiles).length > 0) {
+            finalCode = JSON.stringify(allFiles);
+          }
+        } catch (e) {
+          console.warn('Could not collect IDE files on end:', e);
+        }
+      }
+
       const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionData.id}/end`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ finalCode }),
       });
 
       const data = await response.json();
@@ -2167,7 +2212,7 @@ export default function AssessmentPage({
                       messages.map((msg, idx) => {
                         const codeBlockRegex = /```([\s\S]*?)```/g;
                         const hasCode = codeBlockRegex.test(msg.content);
-                        let parts: JSX.Element[] = [];
+                        let parts: React.ReactElement[] = [];
                         
                         if (hasCode && msg.role === 'assistant') {
                           const regex = /```(\w+)?\n([\s\S]*?)```/g;
@@ -2531,6 +2576,7 @@ export default function AssessmentPage({
           {activeTab === 'ide' && isIDEChallenge && !isCodeChallenge && (
             <div className="flex-1 flex relative overflow-hidden h-full w-full">
               <StackBlitzIDE
+                ref={ideRef}
                 sessionId={sessionData?.id || null}
                 templateFiles={templateFiles || {}}
                 tasks={assessmentTemplate && Array.isArray(assessmentTemplate) && assessmentTemplate.length > 0
@@ -2586,16 +2632,16 @@ export default function AssessmentPage({
                 }}
                 onFileChange={(path, content) => {
                   // Track file changes for MCP agents
-                  console.log('File changed:', path);
-                  // Track code modification
-                  trackCodeModification(
-                    sessionData?.id,
-                    1, // Line number (not applicable for file changes)
-                    '', // codeBefore
-                    content, // codeAfter
-                    '', // oldText
-                    content // newText
-                  );
+                  if (trackCodeModification) {
+                    trackCodeModification(
+                      sessionData?.id,
+                      0, // Line number (file-level change)
+                      '', // codeBefore (not available for file-level saves)
+                      content, // codeAfter
+                      path, // oldText repurposed as filePath context
+                      content // newText
+                    );
+                  }
                 }}
                 onTerminalOutput={(output) => {
                   console.log('Terminal output:', output);

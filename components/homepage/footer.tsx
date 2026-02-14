@@ -17,17 +17,17 @@ export function Footer() {
             <h4 className="mb-4 text-sm font-semibold text-white">Product</h4>
             <ul className="space-y-2 text-sm text-zinc-400">
               <li>
-                <Link href="#" className="hover:text-white">
+                <Link href="#features" className="hover:text-white">
                   Features
                 </Link>
               </li>
               <li>
-                <Link href="#" className="hover:text-white">
-                  Pricing
+                <Link href="#compare" className="hover:text-white">
+                  Compare
                 </Link>
               </li>
               <li>
-                <Link href="#" className="hover:text-white">
+                <Link href="#demo" className="hover:text-white">
                   Demo
                 </Link>
               </li>
@@ -37,38 +37,8 @@ export function Footer() {
             <h4 className="mb-4 text-sm font-semibold text-white">Company</h4>
             <ul className="space-y-2 text-sm text-zinc-400">
               <li>
-                <Link href="#" className="hover:text-white">
+                <Link href="#features" className="hover:text-white">
                   About
-                </Link>
-              </li>
-              <li>
-                <Link href="#" className="hover:text-white">
-                  Blog
-                </Link>
-              </li>
-              <li>
-                <Link href="#" className="hover:text-white">
-                  Careers
-                </Link>
-              </li>
-            </ul>
-          </div>
-          <div>
-            <h4 className="mb-4 text-sm font-semibold text-white">Legal</h4>
-            <ul className="space-y-2 text-sm text-zinc-400">
-              <li>
-                <Link href="#" className="hover:text-white">
-                  Privacy
-                </Link>
-              </li>
-              <li>
-                <Link href="#" className="hover:text-white">
-                  Terms
-                </Link>
-              </li>
-              <li>
-                <Link href="#" className="hover:text-white">
-                  Security
                 </Link>
               </li>
             </ul>
