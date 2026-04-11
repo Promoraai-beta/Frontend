@@ -37,6 +37,9 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  --scrollbar-track: oklch(0.97 0 0);
+  --scrollbar-thumb: oklch(0.7 0 0);
+  --scrollbar-thumb-hover: oklch(0.55 0 0);
 }
 
 .dark {
@@ -72,10 +75,14 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(0.22 0 0);
   --sidebar-ring: oklch(0.65 0 0);
+  --scrollbar-track: oklch(0.12 0 0);
+  --scrollbar-thumb: oklch(0.3 0 0);
+  --scrollbar-thumb-hover: oklch(0.4 0 0);
 }
 
 @theme inline {
   --font-sans: "Geist", "Geist Fallback";
+  --font-serif: var(--font-display), "Georgia", serif;
   --font-mono: "Geist Mono", "Geist Mono Fallback";
   /* Updated text-sm from 0.875rem to 0.9375rem */
   --font-size-sm: 0.9375rem;
@@ -126,21 +133,40 @@
   }
 }
 
-/* Custom scrollbar for dark theme */
+/* Custom scrollbar - theme-aware */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 
 ::-webkit-scrollbar-track {
-  background: oklch(0.12 0 0);
+  background: var(--scrollbar-track);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: oklch(0.3 0 0);
+  background: var(--scrollbar-thumb);
   border-radius: 5px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: oklch(0.4 0 0);
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* Hide scrollbar utility for tab bars */
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Background Lines - Aceternity-style wave animation (height.app inspired) */
+@keyframes background-lines-wave {
+  0%, 100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.75;
+  }
 }

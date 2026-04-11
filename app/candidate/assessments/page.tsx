@@ -26,7 +26,7 @@ interface Assessment {
   timeSpent: string
   visibility: "public" | "private"
   earnedPoints: number
-  company?: string
+  company?: string | { name?: string }
   isRecruiterAssessment?: boolean
   candidateName?: string
   candidateEmail?: string
@@ -94,7 +94,8 @@ export default function MyAssessmentsPage() {
               : s.assessmentId 
                 ? `Assessment ${s.assessmentId}` 
                 : `Session ${s.sessionCode || s.session_code || s.id}`;
-            
+            const companyRaw = s.assessment?.company;
+            const companyName = typeof companyRaw === 'string' ? companyRaw : (companyRaw?.name ?? null);
             return {
               id: s.id,
               sessionCode: s.sessionCode || s.session_code,
@@ -106,7 +107,9 @@ export default function MyAssessmentsPage() {
               totalQuestions: s.assessment?.template?.suggestedAssessments?.length || 0,
               timeSpent: s.timeLimit ? `${Math.floor(s.timeLimit / 60)}m` : '0m',
               visibility: 'private' as const,
-              earnedPoints: s.score || 0
+              earnedPoints: s.score || 0,
+              company: companyName,
+              isRecruiterAssessment: s.assessment?.assessmentType === 'recruiter'
             };
           });
           setAssessments(sessions)
@@ -134,9 +137,11 @@ export default function MyAssessmentsPage() {
       })
   }, [])
 
-  // Get unique companies for filter
+  // Get unique company names for filter (handle both string and object)
+  const getCompanyName = (c: string | { name?: string } | undefined) =>
+    typeof c === 'string' ? c : (c?.name ?? null)
   const companies = Array.from(
-    new Set(assessments.map(a => a.company).filter(Boolean))
+    new Set(assessments.map(a => getCompanyName(a.company)).filter(Boolean))
   ).sort() as string[]
 
   const filteredAssessments = assessments
@@ -154,13 +159,14 @@ export default function MyAssessmentsPage() {
       
       // Company filter
       const matchesCompany = filterCompany === "all" || 
-        assessment.company === filterCompany
+        getCompanyName(assessment.company) === filterCompany
       
       // Search filter (search in title, company, and candidate name)
       const searchLower = searchQuery.toLowerCase()
+      const companyStr = getCompanyName(assessment.company)
       const matchesSearch = searchQuery === "" ||
         assessment.title.toLowerCase().includes(searchLower) ||
-        (assessment.company && assessment.company.toLowerCase().includes(searchLower)) ||
+        (companyStr && companyStr.toLowerCase().includes(searchLower)) ||
         (assessment.candidateName && assessment.candidateName.toLowerCase().includes(searchLower)) ||
         (assessment.sessionCode && assessment.sessionCode.toLowerCase().includes(searchLower))
       
@@ -192,8 +198,8 @@ export default function MyAssessmentsPage() {
           return a.title.localeCompare(b.title)
         case "company":
           // Sort by company, then by title
-          const companyA = a.company || ""
-          const companyB = b.company || ""
+          const companyA = getCompanyName(a.company) || ""
+          const companyB = getCompanyName(b.company) || ""
           if (companyA !== companyB) return companyA.localeCompare(companyB)
           return a.title.localeCompare(b.title)
         default:
@@ -537,9 +543,9 @@ export default function MyAssessmentsPage() {
                           Self Assessment
                         </span>
                       )}
-                      {assessment.company && (
+                      {getCompanyName(assessment.company) && (
                         <span className="rounded-full border border-zinc-700 bg-zinc-800/50 px-3 py-1 text-xs text-zinc-400">
-                          {assessment.company}
+                          {getCompanyName(assessment.company)}
                         </span>
                       )}
                     </div>
@@ -655,7 +661,8 @@ export default function MyAssessmentsPage() {
                       : `Session ${s.sessionCode || s.session_code || s.id}`
                   
                   const isRecruiterAssessment = s.assessment?.assessmentType === 'recruiter'
-                  const companyName = s.assessment?.company || s.assessment?.company?.name || null
+                  const companyRaw = s.assessment?.company
+                  const companyName = typeof companyRaw === 'string' ? companyRaw : (companyRaw?.name ?? null)
                   
                   let completedAtFormatted = null
                   if (s.submittedAt || s.submitted_at) {

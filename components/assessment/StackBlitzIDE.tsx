@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { createPortal } from 'react-dom';
 import type { WebContainer } from '@webcontainer/api';
 import { STACKBLITZ_WEBCONTAINER_API_KEY } from '@/lib/config';
 import dynamic from 'next/dynamic';
 import { useAIWatcher } from '@/hooks/useAIWatcher';
 import { Panel, PanelGroup, PanelResizeHandle, ImperativePanelHandle } from 'react-resizable-panels';
+import { Button } from '@/components/ui/button';
 import { 
   Play, 
   Square, 
@@ -28,7 +29,13 @@ import {
   ExternalLink,
   Monitor,
   Eye,
-  Code
+  Code,
+  Terminal as TerminalIcon,
+  AlertTriangle,
+  Info,
+  CheckCircle2,
+  XCircle,
+  ScrollText
 } from 'lucide-react';
 
 // Dynamically import Monaco and Spline to avoid SSR issues
@@ -74,6 +81,12 @@ interface FileNode {
   expanded?: boolean;
 }
 
+// Public methods exposed via ref
+export interface StackBlitzIDEHandle {
+  /** Recursively read all files from WebContainer and return as {path: content} */
+  getAllFiles: () => Promise<Record<string, string>>;
+}
+
 // Singleton to ensure only one WebContainer instance exists globally
 let globalWebContainer: WebContainer | null = null;
 let bootPromise: Promise<WebContainer> | null = null;
@@ -81,7 +94,7 @@ let bootPromise: Promise<WebContainer> | null = null;
 /**
  * StackBlitz WebContainer IDE Component - Fixed Overflow Issues
  */
-export default function StackBlitzIDE({ 
+const StackBlitzIDE = forwardRef<StackBlitzIDEHandle, StackBlitzIDEProps>(function StackBlitzIDE({ 
   files = {},
   onFileChange,
   onTerminalOutput,
@@ -94,8 +107,48 @@ export default function StackBlitzIDE({
   showLLMSelector = false,
   onSelectLLM,
   sessionId
-}: StackBlitzIDEProps) {
+}, ref) {
   const containerRef = useRef<WebContainer | null>(null);
+
+  // ── Expose getAllFiles via ref so parent can collect files on submit/end ──
+  const getAllFiles = useCallback(async (): Promise<Record<string, string>> => {
+    const container = containerRef.current;
+    if (!container) return {};
+
+    const result: Record<string, string> = {};
+    const skipDirs = new Set(['node_modules', '.git', 'dist', 'build', '.next', '.cache', '.vite']);
+
+    async function readDir(dir: string, prefix: string) {
+      try {
+        const entries = await container!.fs.readdir(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const name = typeof entry === 'string' ? entry : entry.name;
+          const fullPath = prefix ? `${prefix}/${name}` : name;
+
+          if (skipDirs.has(name)) continue;
+
+          const isDir = typeof entry !== 'string' && entry.isDirectory?.();
+          if (isDir) {
+            await readDir(`${dir}/${name}`, fullPath);
+          } else {
+            try {
+              const content = await container!.fs.readFile(`${dir}/${name}`, 'utf-8');
+              result[fullPath] = typeof content === 'string' ? content : String(content);
+            } catch {
+              // Binary file or unreadable — skip
+            }
+          }
+        }
+      } catch {
+        // Directory read error — skip
+      }
+    }
+
+    await readDir('/', '');
+    return result;
+  }, []);
+
+  useImperativeHandle(ref, () => ({ getAllFiles }), [getAllFiles]);
   
   // Initialize AI Watcher for tracking WebContainer activities
   const { trackEvent, trackCodeModification } = useAIWatcher();
@@ -113,6 +166,15 @@ export default function StackBlitzIDE({
   const [isInstalling, setIsInstalling] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [serverUrl, setServerUrl] = useState<string | null>(null);
+
+  // ── Quick Open (Ctrl+P) ──
+  const [showQuickOpen, setShowQuickOpen] = useState(false);
+  const [quickOpenQuery, setQuickOpenQuery] = useState('');
+  const quickOpenRef = useRef<HTMLInputElement>(null);
+
+  // ── Editor cursor position for status bar ──
+  const [cursorLine, setCursorLine] = useState(1);
+  const [cursorColumn, setCursorColumn] = useState(1);
   
   // Multiple terminals support
   interface TerminalInstance {
@@ -121,11 +183,53 @@ export default function StackBlitzIDE({
     terminal: any;
     process: any;
     fitAddon: any;
+    searchAddon: any;
     inputWriter: any;
   }
   const [terminals, setTerminals] = useState<TerminalInstance[]>([]);
   const [activeTerminalId, setActiveTerminalId] = useState<string | null>(null);
   const [editorViewMode, setEditorViewMode] = useState<'code' | 'preview'>('code');
+
+  // Terminal search state
+  const [terminalSearchOpen, setTerminalSearchOpen] = useState(false);
+  const [terminalSearchQuery, setTerminalSearchQuery] = useState('');
+  const terminalSearchRef = useRef<HTMLInputElement>(null);
+
+  // Terminal context menu
+  const [terminalContextMenu, setTerminalContextMenu] = useState<{ x: number; y: number; terminalId: string } | null>(null);
+
+  // ── Console / Output Panel ──
+  interface ConsoleEntry {
+    id: string;
+    type: 'info' | 'error' | 'warn' | 'success' | 'output';
+    message: string;
+    timestamp: Date;
+    source?: string; // 'npm-install' | 'dev-server' | 'system'
+  }
+  const [consoleLogs, setConsoleLogs] = useState<ConsoleEntry[]>([]);
+  const [bottomPanelTab, setBottomPanelTab] = useState<'terminal' | 'console' | 'problems'>('console');
+  const consoleEndRef = useRef<HTMLDivElement>(null);
+
+  // Parsed problems from console output
+  const problems = useMemo(() => {
+    return consoleLogs.filter(log => log.type === 'error' || log.type === 'warn');
+  }, [consoleLogs]);
+
+  // Add entry to console log
+  const addConsoleLog = useCallback((type: ConsoleEntry['type'], message: string, source?: string) => {
+    setConsoleLogs(prev => [...prev, {
+      id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      type,
+      message: message.trim(),
+      timestamp: new Date(),
+      source
+    }]);
+  }, []);
+
+  // Auto-scroll console to bottom
+  useEffect(() => {
+    consoleEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [consoleLogs]);
   
   // UI state
   const [isChatOpen, setIsChatOpen] = useState(false);
@@ -307,6 +411,15 @@ export default function StackBlitzIDE({
   useEffect(() => {
     async function initWebContainer() {
       try {
+        // WebContainer requires crossOriginIsolated (SharedArrayBuffer) - check before booting
+        if (typeof window !== 'undefined' && !window.crossOriginIsolated) {
+          const msg = 'The in-browser IDE requires cross-origin isolation. Please open this assessment in a new tab directly (not embedded) so the required security headers can be applied.';
+          console.warn('⚠️ WebContainer unavailable:', msg);
+          setError(msg);
+          setIsLoading(false);
+          return;
+        }
+
         const { WebContainer, auth } = await import('@webcontainer/api');
         
         console.log('🚀 Initializing WebContainer...');
@@ -338,7 +451,10 @@ export default function StackBlitzIDE({
           globalWebContainer = container;
         } else {
           console.log('🚀 Booting new WebContainer...');
-          bootPromise = WebContainer.boot();
+          bootPromise = WebContainer.boot({
+            workdirName: 'project',
+            forwardPreviewErrors: true,
+          });
           container = await bootPromise;
           globalWebContainer = container;
           bootPromise = null;
@@ -443,22 +559,34 @@ export default function StackBlitzIDE({
         container.on('server-ready', (port: number, url: string) => {
           const fullUrl = url.startsWith('http') ? url : `http://${url}`;
           setServerUrl(fullUrl);
-          console.log(`✅ Dev server ready: ${fullUrl}`);
-          // Notify all active terminals (will be updated when terminals state changes)
-          setTimeout(() => {
-            terminals.forEach((term) => {
-              if (term.terminal) {
-                term.terminal.writeln(`\r\n✅ Server ready at ${fullUrl}`);
-              }
-            });
-          }, 100);
+          addConsoleLog('success', `Dev server ready at ${fullUrl} (port ${port})`, 'dev-server');
+        });
+
+        // Listen for WebContainer internal errors
+        container.on('error', (error: { message: string }) => {
+          addConsoleLog('error', `WebContainer error: ${error.message}`, 'system');
+        });
+
+        // Listen for preview iframe errors (runtime exceptions, console.error)
+        container.on('preview-message', (message: any) => {
+          const type = message.type;
+          if (type === 'UncaughtException' || type === 'UNCAUGHT_EXCEPTION') {
+            addConsoleLog('error', `Runtime Error: ${message.message}${message.stack ? '\n' + message.stack : ''}`, 'preview');
+          } else if (type === 'UnhandledRejection' || type === 'UNHANDLED_REJECTION') {
+            addConsoleLog('error', `Unhandled Promise Rejection: ${message.message}`, 'preview');
+          } else if (type === 'ConsoleError' || type === 'CONSOLE_ERROR') {
+            const args = message.args?.join(', ') || 'Unknown error';
+            addConsoleLog('error', `console.error: ${args}`, 'preview');
+          }
         });
 
         setIsReady(true);
         setIsLoading(false);
-        console.log('🎉 WebContainer initialized successfully');
+        addConsoleLog('success', 'WebContainer initialized successfully', 'system');
+        addConsoleLog('info', 'Starting dependency installation...', 'system');
       } catch (err: any) {
-        console.error('❌ Failed to initialize WebContainer:', err);
+        addConsoleLog('error', `Failed to initialize IDE: ${err?.message || err}`, 'system');
+        console.error('Failed to initialize WebContainer:', err);
         let errorMessage = 'Failed to initialize IDE';
         if (err.message?.includes('Only a single WebContainer instance')) {
           if (globalWebContainer) {
@@ -467,6 +595,9 @@ export default function StackBlitzIDE({
             setIsLoading(false);
             return;
           }
+        }
+        if (err?.message?.includes('SharedArrayBuffer') || err?.message?.includes('crossOriginIsolated') || err?.name === 'DataCloneError') {
+          errorMessage = 'The in-browser IDE requires cross-origin isolation. Please open this assessment in a new tab directly (not embedded) so the required security headers can be applied.';
         }
         setError(errorMessage);
         setIsLoading(false);
@@ -482,35 +613,43 @@ export default function StackBlitzIDE({
     };
   }, []);
 
-  // Auto-install dependencies
+  // Auto-install dependencies — output goes to Console panel
   useEffect(() => {
     (async () => {
       if (!isReady || !containerRef.current) return;
       try {
         const pkgJsonRaw = await containerRef.current.fs.readFile('/package.json', 'utf-8').catch(() => null);
         if (!pkgJsonRaw) {
-          console.log('ℹ️ No package.json found, skipping auto-install');
+          addConsoleLog('info', 'No package.json found, skipping auto-install', 'system');
           return;
         }
         
-        const term: any = (containerRef as any).terminal;
-        const log = (msg: string, color?: string) => {
-          if (term) {
-            term.writeln(color ? `\u001b[${color}m${msg}\u001b[0m` : msg);
-          } else {
-            console.log(msg);
-          }
-        };
-        
         setIsInstalling(true);
-        log('📦 Installing dependencies...', '36');
-        
+        addConsoleLog('info', '📦 Installing dependencies...', 'npm-install');
+
         const install = await containerRef.current.spawn('npm', ['install']);
+
+        // Buffer npm install output and parse for errors
+        // Broad regex strips ALL ANSI escape sequences (colors, cursor movement, clear line, etc.)
+        const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '').trim();
+        // Filter out npm progress spinner noise (single chars like / - \ |, bare numbers, etc.)
+        const isSpinnerNoise = (s: string) => /^[\/\-\\|⸩⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏#.]+$/.test(s) || s.length <= 2;
+
         install.output.pipeTo(
           new WritableStream({
             write(data: string) {
-              if (term) term.write(data);
-              console.log('[npm install]', data.trim());
+              const lines = data.split('\n').filter((l: string) => l.trim());
+              for (const line of lines) {
+                const trimmed = stripAnsi(line);
+                if (!trimmed || isSpinnerNoise(trimmed)) continue;
+                if (/error|ERR!/i.test(trimmed)) {
+                  addConsoleLog('error', trimmed, 'npm-install');
+                } else if (/warn/i.test(trimmed)) {
+                  addConsoleLog('warn', trimmed, 'npm-install');
+                } else {
+                  addConsoleLog('output', trimmed, 'npm-install');
+                }
+              }
             },
           })
         );
@@ -519,11 +658,11 @@ export default function StackBlitzIDE({
         setIsInstalling(false);
         
         if (code !== 0) {
-          log('❌ npm install failed', '31');
+          addConsoleLog('error', '❌ npm install failed (exit code ' + code + ')', 'npm-install');
           return;
         }
         
-        log('✅ Dependencies installed successfully', '32');
+        addConsoleLog('success', '✅ Dependencies installed successfully', 'npm-install');
 
         const pkg = JSON.parse(typeof pkgJsonRaw === 'string' ? pkgJsonRaw : String(pkgJsonRaw));
         const scripts: Record<string, string> = pkg.scripts || {};
@@ -553,18 +692,18 @@ export default function StackBlitzIDE({
         if (scriptsFixed) {
           pkg.scripts = fixedScripts;
           await containerRef.current.fs.writeFile('/package.json', JSON.stringify(pkg, null, 2));
-          log('🔧 Fixed scripts to use npx', '36');
+          addConsoleLog('info', '🔧 Fixed scripts to use npx', 'system');
         }
         
         const runCmd = fixedScripts.dev ? ['run', 'dev'] : fixedScripts.start ? ['run', 'start'] : null;
         if (!runCmd) {
-          log('⚠️ No dev/start script found; skipping auto-run.', '33');
+          addConsoleLog('warn', '⚠️ No dev/start script found; skipping auto-run.', 'system');
           return;
         }
         
         setIsRunning(true);
         const runCmdStr = `npm ${runCmd.join(' ')}`;
-        log(`🚀 Starting server: ${runCmdStr}`, '36');
+        addConsoleLog('info', `🚀 Starting dev server: ${runCmdStr}`, 'dev-server');
         
         const run = await containerRef.current.spawn('npm', runCmd);
         
@@ -581,20 +720,30 @@ export default function StackBlitzIDE({
           }).catch((err: any) => console.error('Failed to track command:', err));
         }
         
+        // Stream dev server output to console panel (reuse stripAnsi & isSpinnerNoise from above)
         run.output.pipeTo(
           new WritableStream({
             write(data: string) {
-              if (term) term.write(data);
-              console.log(`[${runCmdStr}]`, data.trim());
+              const lines = data.split('\n').filter((l: string) => l.trim());
+              for (const line of lines) {
+                const trimmed = stripAnsi(line);
+                if (!trimmed || isSpinnerNoise(trimmed)) continue;
+                if (/error|Error|ERR!|SyntaxError|TypeError|ReferenceError|Cannot find module|Failed to compile/i.test(trimmed)) {
+                  addConsoleLog('error', trimmed, 'dev-server');
+                } else if (/warn|Warning/i.test(trimmed)) {
+                  addConsoleLog('warn', trimmed, 'dev-server');
+                } else if (/ready|compiled|✓|server running|VITE.*ready/i.test(trimmed)) {
+                  addConsoleLog('success', trimmed, 'dev-server');
+                } else {
+                  addConsoleLog('output', trimmed, 'dev-server');
+                }
+              }
             },
           })
         );
       } catch (e: any) {
-        const term: any = (containerRef as any).terminal;
-        const errorMsg = `❌ Auto-install error: ${e?.message || e}`;
-        if (term) {
-          term.writeln(`\u001b[31m${errorMsg}\u001b[0m`);
-        }
+        const errorMsg = `Auto-install error: ${e?.message || e}`;
+        addConsoleLog('error', errorMsg, 'system');
         console.error(errorMsg, e);
         setIsInstalling(false);
         setIsRunning(false);
@@ -618,6 +767,132 @@ export default function StackBlitzIDE({
       setFileContent('');
     }
   };
+
+  // ── Tab management ──
+  const handleCloseTab = useCallback((filePath: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const newOpen = openFiles.filter(f => f !== filePath);
+    setOpenFiles(newOpen);
+    if (selectedFile === filePath) {
+      if (newOpen.length > 0) {
+        // Select the tab to the left, or the first one
+        const idx = openFiles.indexOf(filePath);
+        const nextFile = newOpen[Math.min(idx, newOpen.length - 1)] || newOpen[0];
+        handleFileSelect(nextFile);
+      } else {
+        setSelectedFile(null);
+        setFileContent('');
+      }
+    }
+  }, [openFiles, selectedFile]);
+
+  // ── File type icons ──
+  const getFileIcon = useCallback((filename: string): { icon: string; color: string } => {
+    const ext = filename.split('.').pop()?.toLowerCase() || '';
+    const name = filename.toLowerCase();
+    const iconMap: Record<string, { icon: string; color: string }> = {
+      'tsx': { icon: '⚛', color: 'text-blue-400' },
+      'jsx': { icon: '⚛', color: 'text-blue-300' },
+      'ts': { icon: 'TS', color: 'text-blue-500' },
+      'js': { icon: 'JS', color: 'text-yellow-400' },
+      'mjs': { icon: 'JS', color: 'text-yellow-400' },
+      'json': { icon: '{}', color: 'text-yellow-300' },
+      'css': { icon: '#', color: 'text-purple-400' },
+      'scss': { icon: '#', color: 'text-pink-400' },
+      'html': { icon: '<>', color: 'text-orange-400' },
+      'md': { icon: 'M↓', color: 'text-zinc-300' },
+      'svg': { icon: '◇', color: 'text-amber-400' },
+      'png': { icon: '🖼', color: 'text-green-400' },
+      'jpg': { icon: '🖼', color: 'text-green-400' },
+      'py': { icon: '🐍', color: 'text-green-400' },
+      'sql': { icon: 'DB', color: 'text-blue-300' },
+      'env': { icon: '⚙', color: 'text-zinc-400' },
+      'yml': { icon: '⚙', color: 'text-red-300' },
+      'yaml': { icon: '⚙', color: 'text-red-300' },
+      'toml': { icon: '⚙', color: 'text-zinc-400' },
+      'lock': { icon: '🔒', color: 'text-zinc-500' },
+      'gitignore': { icon: '◌', color: 'text-zinc-500' },
+      'test.tsx': { icon: '✓', color: 'text-green-400' },
+      'test.ts': { icon: '✓', color: 'text-green-400' },
+      'test.js': { icon: '✓', color: 'text-green-400' },
+      'spec.tsx': { icon: '✓', color: 'text-green-400' },
+      'spec.ts': { icon: '✓', color: 'text-green-400' },
+    };
+    // Check compound extensions first (test.tsx, etc.)
+    for (const [key, val] of Object.entries(iconMap)) {
+      if (name.endsWith(`.${key}`)) return val;
+    }
+    if (name === 'package.json') return { icon: '📦', color: 'text-green-400' };
+    if (name === 'readme.md') return { icon: '📖', color: 'text-blue-300' };
+    if (name === 'dockerfile') return { icon: '🐳', color: 'text-blue-400' };
+    if (name.startsWith('.env')) return { icon: '⚙', color: 'text-yellow-500' };
+    return iconMap[ext] || { icon: '📄', color: 'text-zinc-400' };
+  }, []);
+
+  // ── Quick Open: get flat file list ──
+  const allFilePaths = useMemo(() => {
+    const paths: string[] = [];
+    const collectPaths = (nodes: FileNode[]) => {
+      for (const node of nodes) {
+        if (node.type === 'file') paths.push(node.path);
+        if (node.children) collectPaths(node.children);
+      }
+    };
+    collectPaths(fileTree);
+    return paths;
+  }, [fileTree]);
+
+  const filteredQuickOpenFiles = useMemo(() => {
+    if (!quickOpenQuery.trim()) return allFilePaths.slice(0, 20);
+    const q = quickOpenQuery.toLowerCase();
+    return allFilePaths
+      .filter(p => p.toLowerCase().includes(q) || p.split('/').pop()?.toLowerCase().includes(q))
+      .slice(0, 15);
+  }, [allFilePaths, quickOpenQuery]);
+
+  // ── Keyboard shortcuts ──
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+P / Cmd+P → Quick Open
+      if ((e.ctrlKey || e.metaKey) && e.key === 'p' && !e.shiftKey) {
+        e.preventDefault();
+        setShowQuickOpen(prev => !prev);
+        setQuickOpenQuery('');
+      }
+      // Ctrl+W / Cmd+W → Close current tab
+      if ((e.ctrlKey || e.metaKey) && e.key === 'w') {
+        e.preventDefault();
+        if (selectedFile) handleCloseTab(selectedFile);
+      }
+      // Escape → Close quick open
+      if (e.key === 'Escape' && showQuickOpen) {
+        setShowQuickOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedFile, showQuickOpen, handleCloseTab]);
+
+  // Focus quick open input when opened
+  useEffect(() => {
+    if (showQuickOpen) {
+      setTimeout(() => quickOpenRef.current?.focus(), 50);
+    }
+  }, [showQuickOpen]);
+
+  // ── Language for status bar ──
+  const getLanguageName = useCallback((filePath: string | null): string => {
+    if (!filePath) return 'Plain Text';
+    const ext = filePath.split('.').pop()?.toLowerCase() || '';
+    const langMap: Record<string, string> = {
+      'tsx': 'TypeScript React', 'jsx': 'JavaScript React',
+      'ts': 'TypeScript', 'js': 'JavaScript', 'mjs': 'JavaScript',
+      'json': 'JSON', 'css': 'CSS', 'scss': 'SCSS',
+      'html': 'HTML', 'md': 'Markdown', 'py': 'Python',
+      'sql': 'SQL', 'yml': 'YAML', 'yaml': 'YAML',
+    };
+    return langMap[ext] || 'Plain Text';
+  }, []);
 
   // Fix package.json scripts if needed
   const fixPackageJsonScripts = async (content: string): Promise<string> => {
@@ -761,8 +1036,8 @@ export default function StackBlitzIDE({
               </>
             ) : (
               <>
-                <div className="w-4" />
-                <span className="text-xs">📄</span>
+                <div className="w-3" />
+                <span className={`text-[10px] font-bold ${getFileIcon(node.name).color} w-4 text-center leading-none`}>{getFileIcon(node.name).icon}</span>
               </>
             )}
             {isRenaming ? (
@@ -887,6 +1162,8 @@ export default function StackBlitzIDE({
     try {
       const { Terminal } = await import('@xterm/xterm');
       const { FitAddon } = await import('@xterm/addon-fit');
+      const { SearchAddon } = await import('@xterm/addon-search');
+      const { WebLinksAddon } = await import('@xterm/addon-web-links');
       
       const terminalId = `terminal-${Date.now()}`;
       const terminal = new Terminal({
@@ -894,102 +1171,162 @@ export default function StackBlitzIDE({
           background: '#0B0B0F',
           foreground: '#d4d4d8',
           cursor: '#aeafad',
+          selectionBackground: '#264f78',
+          selectionForeground: '#ffffff',
         },
         fontSize: 12,
         fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+        scrollback: 5000,
+        cursorBlink: true,
+        cursorStyle: 'bar',
+        allowTransparency: true,
+        convertEol: true,
       });
 
       const fitAddon = new FitAddon();
       terminal.loadAddon(fitAddon);
 
-      // Create container div for this terminal
-      const terminalDiv = document.createElement('div');
-      terminalDiv.className = 'w-full h-full';
-      terminalDiv.id = terminalId;
-      terminalRefs.current.set(terminalId, terminalDiv);
+      const searchAddon = new SearchAddon();
+      terminal.loadAddon(searchAddon);
 
-      // Wait for next tick to ensure DOM is ready
-      setTimeout(() => {
-        // Find or create the container element in the DOM
-        let containerElement = document.getElementById(terminalId);
-        if (!containerElement) {
-          containerElement = terminalDiv;
-          // We'll append it when the terminal is shown
-        }
-        
-        terminal.open(terminalDiv);
-        fitAddon.fit();
-        
-        containerRef.current!.spawn('jsh', {
-          terminal: {
-            cols: terminal.cols,
-            rows: terminal.rows,
-          },
-        }).then((proc: any) => {
-          // Track terminal spawn for MCP watcher
-          if (sessionId) {
-            trackEvent({
-              sessionId,
-              eventType: 'terminal_spawned',
-              metadata: {
-                command: 'jsh',
-                terminalId: terminalId,
-                terminalName: name
-              }
-            }).catch((err: any) => console.error('Failed to track terminal spawn:', err));
+      const webLinksAddon = new WebLinksAddon((e: MouseEvent, uri: string) => {
+        window.open(uri, '_blank', 'noopener');
+      });
+      terminal.loadAddon(webLinksAddon);
+
+      terminalRefs.current.set(terminalId, null as any);
+
+      // ── Step 1: Add the terminal to state so React renders the <div id={terminalId}> ──
+      const terminalInstance: TerminalInstance = {
+        id: terminalId,
+        name,
+        terminal,
+        process: null as any,
+        fitAddon,
+        searchAddon,
+        inputWriter: null,
+      };
+      
+      setTerminals(prev => [...prev, terminalInstance]);
+      setActiveTerminalId(terminalId);
+
+      // ── Step 2: Wait for React to render the container div, then open xterm into it ──
+      // Use a longer delay + polling to ensure the DOM element exists and is visible
+      const waitForDOM = () => new Promise<HTMLElement>((resolve) => {
+        let attempts = 0;
+        const check = () => {
+          const el = document.getElementById(terminalId);
+          if (el && el.offsetHeight > 0) {
+            resolve(el);
+          } else if (attempts < 30) {
+            attempts++;
+            requestAnimationFrame(check);
+          } else if (el) {
+            resolve(el); // Fallback: use it even without height
           }
-          
-          proc.output.pipeTo(
-            new WritableStream({
-              write(data: string) {
-                terminal.write(data);
-                const lines = data.split('\n').filter((l: string) => l.trim());
-                setTerminalOutput(prev => [...prev, ...lines]);
-                if (onTerminalOutput) {
-                  lines.forEach((line: string) => onTerminalOutput(line));
-                }
-              },
-            })
-          );
-          
-          let inputWriter: any = null;
-          if (proc.input && typeof proc.input.getWriter === 'function') {
-            inputWriter = proc.input.getWriter();
-            terminal.onData(async (data) => {
-              try {
-                await inputWriter.write(data);
-              } catch (err) {
-                console.error('Failed to write to terminal input:', err);
-              }
-            });
-          }
-          
-          const terminalInstance: TerminalInstance = {
-            id: terminalId,
-            name,
-            terminal,
-            process: proc,
-            fitAddon,
-            inputWriter
-          };
-          
-          setTerminals(prev => [...prev, terminalInstance]);
-          if (!activeTerminalId) {
-            setActiveTerminalId(terminalId);
-          }
-          
-          // Append terminal div to DOM when active
-          setTimeout(() => {
-            const containerElement = document.getElementById(terminalId);
-            if (containerElement && !containerElement.contains(terminalDiv)) {
-              containerElement.appendChild(terminalDiv);
-              fitAddon.fit();
+        };
+        // Start after a frame to let React flush
+        requestAnimationFrame(check);
+      });
+
+      const containerEl = await waitForDOM();
+
+      // Open terminal directly into the DOM element (not a detached div)
+      terminal.open(containerEl);
+
+      // Small pause to let the browser layout settle before fitting
+      await new Promise(r => setTimeout(r, 50));
+      fitAddon.fit();
+
+      // Spawn the shell with correct dimensions from the now-visible terminal
+      const cols = terminal.cols || 80;
+      const rows = terminal.rows || 24;
+
+      const proc = await containerRef.current!.spawn('jsh', {
+        terminal: { cols, rows },
+      });
+
+      // Track terminal spawn for MCP watcher
+      if (sessionId) {
+        trackEvent({
+          sessionId,
+          eventType: 'terminal_spawned',
+          metadata: { command: 'jsh', terminalId, terminalName: name }
+        }).catch(() => {});
+      }
+
+      // ── Suppress initial jsh output (garbled welcome) ──
+      // Strategy: absorb output for ~800ms while jsh boots, then reset
+      // the terminal to a clean state and pipe everything through normally.
+      let suppressOutput = true;
+
+      proc.output.pipeTo(
+        new WritableStream({
+          write(data: string) {
+            if (suppressOutput) return; // Absorb initial garbage
+            terminal.write(data);
+            const lines = data.split('\n').filter((l: string) => l.trim());
+            setTerminalOutput(prev => [...prev, ...lines]);
+            if (onTerminalOutput) {
+              lines.forEach((line: string) => onTerminalOutput(line));
             }
-          }, 100);
-        }).catch((err: any) => {
-          console.error('Failed to spawn shell:', err?.message || err);
+          },
+        })
+      );
+
+      // Wire up input
+      let inputWriter: any = null;
+      if (proc.input && typeof proc.input.getWriter === 'function') {
+        inputWriter = proc.input.getWriter();
+        terminal.onData(async (data) => {
+          try { await inputWriter.write(data); } catch { /* ok */ }
         });
-      }, 50);
+      }
+
+      // Resize the shell PTY when the terminal dimensions change
+      terminal.onResize(({ cols, rows }: { cols: number; rows: number }) => {
+        try { proc.resize?.({ cols, rows }); } catch { /* ok */ }
+      });
+
+      // ── ResizeObserver: debounced auto-fit ──
+      let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+      const resizeObserver = new ResizeObserver(() => {
+        if (resizeTimer) clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+          try { fitAddon.fit(); } catch { /* disposed */ }
+        }, 100);
+      });
+      resizeObserver.observe(containerEl);
+
+      // Update the terminal instance with the process + writer
+      setTerminals(prev => prev.map(t =>
+        t.id === terminalId
+          ? { ...t, process: proc, inputWriter }
+          : t
+      ));
+
+      // ── Clean start sequence ──
+      // Wait for ALL jsh startup noise to finish, then clear screen and show a fresh prompt.
+      // jsh emits garbled welcome text + a prompt with a long hash path.
+      // We absorb it all via suppressOutput, then clear the display.
+
+      // Wait for jsh to fully settle (1.5s is generous)
+      await new Promise(r => setTimeout(r, 1500));
+
+      // Un-suppress FIRST so the next writes to xterm from jsh actually display
+      suppressOutput = false;
+
+      // Clear the xterm display (not the jsh process — it's still running)
+      terminal.write('\x1b[2J');    // Clear entire screen
+      terminal.write('\x1b[H');     // Move cursor to top-left
+      terminal.clear();              // Clear scrollback buffer
+
+      // Give jsh a moment, then send Enter to trigger a fresh prompt
+      await new Promise(r => setTimeout(r, 150));
+      if (inputWriter) {
+        try { await inputWriter.write('\n'); } catch { /* ok */ }
+      }
+
     } catch (err) {
       console.error('Failed to create terminal:', err);
     }
@@ -1011,6 +1348,112 @@ export default function StackBlitzIDE({
       }
     }
   };
+
+  // Clear a terminal's screen
+  const clearTerminal = useCallback((terminalId: string) => {
+    const term = terminals.find(t => t.id === terminalId);
+    if (term) {
+      term.terminal.clear();
+      // Also write a fresh prompt
+      term.terminal.write('\x1b[2J\x1b[H');
+    }
+  }, [terminals]);
+
+  // Toggle terminal search for the active terminal
+  const toggleTerminalSearch = useCallback(() => {
+    setTerminalSearchOpen(prev => {
+      const next = !prev;
+      if (next) {
+        setTimeout(() => terminalSearchRef.current?.focus(), 50);
+      } else {
+        // Clear search highlights
+        const activeTerm = terminals.find(t => t.id === activeTerminalId);
+        if (activeTerm?.searchAddon) {
+          activeTerm.searchAddon.clearDecorations();
+        }
+        setTerminalSearchQuery('');
+      }
+      return next;
+    });
+  }, [terminals, activeTerminalId]);
+
+  // Search within terminal
+  const searchInTerminal = useCallback((query: string, direction: 'next' | 'prev' = 'next') => {
+    const activeTerm = terminals.find(t => t.id === activeTerminalId);
+    if (!activeTerm?.searchAddon || !query) return;
+    if (direction === 'next') {
+      activeTerm.searchAddon.findNext(query, { caseSensitive: false, regex: false });
+    } else {
+      activeTerm.searchAddon.findPrevious(query, { caseSensitive: false, regex: false });
+    }
+  }, [terminals, activeTerminalId]);
+
+  // Copy selected text from terminal
+  const copyFromTerminal = useCallback(() => {
+    const activeTerm = terminals.find(t => t.id === activeTerminalId);
+    if (activeTerm) {
+      const selection = activeTerm.terminal.getSelection();
+      if (selection) {
+        navigator.clipboard.writeText(selection).catch(() => {});
+      }
+    }
+    setTerminalContextMenu(null);
+  }, [terminals, activeTerminalId]);
+
+  // Paste into terminal
+  const pasteToTerminal = useCallback(async () => {
+    const activeTerm = terminals.find(t => t.id === activeTerminalId);
+    if (activeTerm?.inputWriter) {
+      try {
+        const text = await navigator.clipboard.readText();
+        await activeTerm.inputWriter.write(text);
+      } catch { /* clipboard blocked */ }
+    }
+    setTerminalContextMenu(null);
+  }, [terminals, activeTerminalId]);
+
+  // Terminal keyboard shortcuts: Ctrl+K clear, Ctrl+F search
+  useEffect(() => {
+    const handleTerminalKeys = (e: KeyboardEvent) => {
+      // Only handle if a terminal is active
+      if (!activeTerminalId) return;
+
+      // Ctrl+K — Clear terminal
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        // Check if the active element is inside a terminal container
+        const activeEl = document.activeElement;
+        const termEl = activeEl?.closest?.('[id^="terminal-"]');
+        if (termEl) {
+          e.preventDefault();
+          clearTerminal(activeTerminalId);
+        }
+      }
+
+      // Ctrl+Shift+F — Search in terminal (using Shift to avoid conflict with editor search)
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'f') {
+        const activeEl = document.activeElement;
+        const termEl = activeEl?.closest?.('[id^="terminal-"]');
+        if (termEl) {
+          e.preventDefault();
+          toggleTerminalSearch();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleTerminalKeys);
+    return () => window.removeEventListener('keydown', handleTerminalKeys);
+  }, [activeTerminalId, clearTerminal, toggleTerminalSearch]);
+
+  // Refit all terminals when active terminal changes (ensures proper sizing on tab switch)
+  useEffect(() => {
+    if (activeTerminalId) {
+      const activeTerm = terminals.find(t => t.id === activeTerminalId);
+      if (activeTerm?.fitAddon) {
+        setTimeout(() => {
+          try { activeTerm.fitAddon.fit(); } catch { /* ok */ }
+        }, 50);
+      }
+    }
+  }, [activeTerminalId, terminals]);
 
   // Handle create new file - shows input in explorer
   const handleNewFile = (parentPath: string = '/') => {
@@ -1327,11 +1770,21 @@ export default function StackBlitzIDE({
   }
 
   if (error) {
+    const isCrossOriginError = error.includes('cross-origin isolation');
     return (
       <div className="min-h-screen w-full flex items-center justify-center bg-gradient-to-b from-[#0B0B0F] to-[#07070A]">
-        <div className="text-center max-w-md">
+        <div className="text-center max-w-md px-4">
           <p className="text-red-400 mb-4">Failed to initialize IDE</p>
-          <p className="text-zinc-400 text-sm">{error}</p>
+          <p className="text-zinc-400 text-sm mb-6">{error}</p>
+          {isCrossOriginError && typeof window !== 'undefined' && (
+            <Button
+              onClick={() => window.open(window.location.href, '_blank', 'noopener,noreferrer')}
+              className="gap-2"
+            >
+              <ExternalLink className="h-4 w-4" />
+              Open in new tab
+            </Button>
+          )}
         </div>
       </div>
     );
@@ -1699,31 +2152,58 @@ export default function StackBlitzIDE({
                     <Panel defaultSize={60} minSize={30} className="flex flex-col min-h-0">
                       {/* FIXED: Added box-border */}
                       <div className="flex-1 flex flex-col border border-zinc-800 bg-zinc-950/60 backdrop-blur-xl overflow-hidden min-h-0 rounded-xl box-border">
-                        <div className="border-b border-zinc-800 bg-zinc-950/70 px-4 py-2 flex items-center justify-between shrink-0">
-                          <div className="flex items-center gap-3 flex-1 min-w-0">
-                            <span className="text-sm text-white truncate">{selectedFileName || 'Untitled'}</span>
-                            {/* Preview/Code Toggle */}
+                        {/* ── Tab Bar ── */}
+                        <div className="border-b border-zinc-800 bg-zinc-900/80 flex items-center shrink-0 overflow-hidden">
+                          <div className="flex-1 flex items-center overflow-x-auto scrollbar-none min-w-0">
+                            {openFiles.map((filePath) => {
+                              const fileName = filePath.split('/').pop() || filePath;
+                              const icon = getFileIcon(fileName);
+                              const isActive = filePath === selectedFile;
+                              return (
+                                <div
+                                  key={filePath}
+                                  onClick={() => handleFileSelect(filePath)}
+                                  className={`group flex items-center gap-1.5 px-3 py-1.5 cursor-pointer border-r border-zinc-800 transition-colors whitespace-nowrap select-none ${
+                                    isActive
+                                      ? 'bg-zinc-950/80 text-zinc-100 border-t-2 border-t-blue-500'
+                                      : 'bg-zinc-900/60 text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-300 border-t-2 border-t-transparent'
+                                  }`}
+                                  title={filePath}
+                                >
+                                  <span className={`text-[10px] font-bold ${icon.color} leading-none`}>{icon.icon}</span>
+                                  <span className="text-xs">{fileName}</span>
+                                  <button
+                                    onClick={(e) => handleCloseTab(filePath, e)}
+                                    className={`ml-1 rounded hover:bg-zinc-700 p-0.5 transition-opacity ${
+                                      isActive ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover:opacity-70 hover:!opacity-100'
+                                    }`}
+                                    title="Close"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          {/* Preview/Code Toggle */}
+                          <div className="flex items-center gap-1 px-2 shrink-0">
                             {serverUrl && (
-                              <div className="flex items-center gap-1 bg-zinc-900 rounded-lg p-0.5 border border-zinc-800">
+                              <div className="flex items-center gap-0.5 bg-zinc-900 rounded-md p-0.5 border border-zinc-800">
                                 <button
                                   onClick={() => setEditorViewMode('code')}
-                                  className={`px-2.5 py-1 rounded-md transition-colors flex items-center gap-1.5 ${
+                                  className={`px-2 py-0.5 rounded transition-colors flex items-center gap-1 text-xs ${
                                     editorViewMode === 'code'
                                       ? 'bg-zinc-800 text-zinc-200'
                                       : 'text-zinc-400 hover:text-zinc-200'
                                   }`}
                                   title="Code View"
                                 >
-                                  <Code className="h-3.5 w-3.5" />
+                                  <Code className="h-3 w-3" />
                                 </button>
                                 <button
-                                  onClick={() => {
-                                    if (serverUrl) {
-                                      setEditorViewMode('preview');
-                                    }
-                                  }}
+                                  onClick={() => { if (serverUrl) setEditorViewMode('preview'); }}
                                   disabled={!serverUrl}
-                                  className={`px-2.5 py-1 rounded-md transition-colors flex items-center gap-1.5 ${
+                                  className={`px-2 py-0.5 rounded transition-colors flex items-center gap-1 text-xs ${
                                     editorViewMode === 'preview'
                                       ? 'bg-zinc-800 text-zinc-200'
                                       : serverUrl
@@ -1732,13 +2212,31 @@ export default function StackBlitzIDE({
                                   }`}
                                   title={serverUrl ? "Preview View" : "Start dev server to enable preview"}
                                 >
-                                  <Eye className="h-3.5 w-3.5" />
+                                  <Eye className="h-3 w-3" />
                                 </button>
                               </div>
                             )}
                           </div>
-                          <span className="text-xs text-zinc-500 hidden sm:inline ml-2">UTF-8</span>
                         </div>
+
+                        {/* ── Breadcrumb ── */}
+                        {selectedFile && (
+                          <div className="border-b border-zinc-800/50 bg-zinc-950/40 px-3 py-1 flex items-center gap-1 text-[11px] text-zinc-500 shrink-0 overflow-x-auto scrollbar-none">
+                            {selectedFile.split('/').map((segment, idx, arr) => (
+                              <span key={idx} className="flex items-center gap-1 whitespace-nowrap">
+                                {idx > 0 && <ChevronRight className="h-2.5 w-2.5 text-zinc-600" />}
+                                <span className={idx === arr.length - 1 ? 'text-zinc-300' : 'hover:text-zinc-300 cursor-pointer'}>
+                                  {idx === arr.length - 1 ? (
+                                    <span className="flex items-center gap-1">
+                                      <span className={`text-[9px] font-bold ${getFileIcon(segment).color}`}>{getFileIcon(segment).icon}</span>
+                                      {segment}
+                                    </span>
+                                  ) : segment}
+                                </span>
+                              </span>
+                            ))}
+                          </div>
+                        )}
                         
                         <div className="flex-1 relative min-h-0 overflow-hidden">
                           {/* Code Editor View */}
@@ -1763,23 +2261,40 @@ export default function StackBlitzIDE({
                                 editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
                                   handleFileSave();
                                 });
+                                // Track cursor position for status bar
+                                editor.onDidChangeCursorPosition((e: any) => {
+                                  setCursorLine(e.position.lineNumber);
+                                  setCursorColumn(e.position.column);
+                                });
                               }}
                               theme="vs-dark"
                               options={{
-                                minimap: { enabled: false },
+                                minimap: { enabled: true, maxColumn: 80, renderCharacters: false },
                                 fontSize: 13,
                                 lineNumbers: 'on',
                                 fontFamily: 'Menlo, Monaco, "Courier New", monospace',
                                 automaticLayout: true,
                                 wordWrap: 'on',
+                                smoothScrolling: true,
+                                cursorSmoothCaretAnimation: 'on',
+                                bracketPairColorization: { enabled: true },
+                                guides: { bracketPairs: true, indentation: true },
+                                renderLineHighlight: 'all',
+                                scrollBeyondLastLine: false,
                               }}
                             />
                             ) : (
                               <div className="absolute inset-0 flex items-center justify-center text-zinc-500">
-                                <div className="text-center">
-                                  <Code className="h-8 w-8 mx-auto mb-2 text-zinc-600" />
-                                  <p className="text-sm">No file selected</p>
-                                  <p className="text-xs text-zinc-600 mt-1">Select a file from the explorer to start editing</p>
+                                <div className="text-center space-y-2">
+                                  <Code className="h-10 w-10 mx-auto mb-3 text-zinc-700" />
+                                  <p className="text-sm text-zinc-400">No file open</p>
+                                  <p className="text-xs text-zinc-600">Select a file from the explorer or press</p>
+                                  <div className="inline-flex items-center gap-1 mt-1">
+                                    <kbd className="px-1.5 py-0.5 text-[10px] bg-zinc-800 border border-zinc-700 rounded text-zinc-400 font-mono">Ctrl</kbd>
+                                    <span className="text-[10px] text-zinc-600">+</span>
+                                    <kbd className="px-1.5 py-0.5 text-[10px] bg-zinc-800 border border-zinc-700 rounded text-zinc-400 font-mono">P</kbd>
+                                    <span className="text-xs text-zinc-600 ml-1">to search files</span>
+                                  </div>
                                 </div>
                               </div>
                             )
@@ -1808,84 +2323,436 @@ export default function StackBlitzIDE({
                             )
                           )}
                         </div>
+
+                        {/* ── Status Bar ── */}
+                        <div className="border-t border-zinc-800 bg-[#007acc] px-3 py-0.5 flex items-center justify-between text-[11px] text-white shrink-0">
+                          <div className="flex items-center gap-3">
+                            {selectedFile && (
+                              <>
+                                <span className="cursor-pointer hover:bg-white/10 px-1 rounded">
+                                  Ln {cursorLine}, Col {cursorColumn}
+                                </span>
+                                <span className="cursor-pointer hover:bg-white/10 px-1 rounded">
+                                  Spaces: 2
+                                </span>
+                                <span className="cursor-pointer hover:bg-white/10 px-1 rounded">
+                                  UTF-8
+                                </span>
+                              </>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3">
+                            {selectedFile && (
+                              <span className="cursor-pointer hover:bg-white/10 px-1 rounded">
+                                {getLanguageName(selectedFile)}
+                              </span>
+                            )}
+                            <span className="opacity-70">
+                              {openFiles.length} file{openFiles.length !== 1 ? 's' : ''} open
+                            </span>
+                          </div>
+                        </div>
                       </div>
                     </Panel>
                     
                     {/* Resize Handle */}
                     <PanelResizeHandle className="h-1 bg-transparent hover:bg-zinc-700 transition-colors cursor-row-resize" />
                     
-                    {/* Terminal with Tabs */}
+                    {/* Bottom Panel: Console / Problems / Terminal (like VS Code) */}
                     <Panel defaultSize={40} minSize={20} maxSize={60} className="flex flex-col min-h-0">
                       <div className="h-full border border-zinc-800 flex flex-col overflow-hidden rounded-xl bg-zinc-950/70 box-border">
-                        {/* Terminal Tabs */}
-                        <div className="px-2 py-1 border-b border-zinc-800 bg-zinc-950/90 flex items-center gap-1 text-xs shrink-0 overflow-x-auto">
-                          {terminals.map((term) => (
-                            <div
-                              key={term.id}
-                              onClick={() => setActiveTerminalId(term.id)}
-                              className={`px-3 py-1.5 rounded-t flex items-center gap-2 cursor-pointer transition-colors ${
-                                activeTerminalId === term.id
-                                  ? 'bg-zinc-950/70 text-zinc-200 border-t border-l border-r border-zinc-800'
-                                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'
+                        {/* Bottom Panel Header: Section Tabs + Terminal Tabs + Actions */}
+                        <div className="border-b border-zinc-800 bg-zinc-950/90 flex items-center shrink-0">
+                          {/* Section tabs: Console, Problems, Terminal */}
+                          <div className="flex items-center gap-0 px-1 shrink-0 text-xs">
+                            <button
+                              onClick={() => setBottomPanelTab('console')}
+                              className={`px-2.5 py-1.5 flex items-center gap-1.5 transition-colors border-b-2 ${
+                                bottomPanelTab === 'console'
+                                  ? 'border-blue-500 text-zinc-200'
+                                  : 'border-transparent text-zinc-500 hover:text-zinc-300'
                               }`}
                             >
-                              <span>{term.name}</span>
-                              {terminals.length > 1 && (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    closeTerminal(term.id);
-                                  }}
-                                  className="hover:text-red-400"
-                                >
-                                  <X className="h-3 w-3" />
-                                </button>
+                              <ScrollText className="h-3 w-3" />
+                              Console
+                              {consoleLogs.length > 0 && (
+                                <span className="ml-1 text-[9px] bg-zinc-700 text-zinc-300 px-1.5 rounded-full">
+                                  {consoleLogs.length}
+                                </span>
                               )}
+                            </button>
+                            <button
+                              onClick={() => setBottomPanelTab('problems')}
+                              className={`px-2.5 py-1.5 flex items-center gap-1.5 transition-colors border-b-2 ${
+                                bottomPanelTab === 'problems'
+                                  ? 'border-blue-500 text-zinc-200'
+                                  : 'border-transparent text-zinc-500 hover:text-zinc-300'
+                              }`}
+                            >
+                              <AlertTriangle className="h-3 w-3" />
+                              Problems
+                              {problems.length > 0 && (
+                                <span className={`ml-1 text-[9px] px-1.5 rounded-full ${
+                                  problems.some(p => p.type === 'error') ? 'bg-red-900/60 text-red-300' : 'bg-yellow-900/60 text-yellow-300'
+                                }`}>
+                                  {problems.length}
+                                </span>
+                              )}
+                            </button>
+                            <button
+                              onClick={() => setBottomPanelTab('terminal')}
+                              className={`px-2.5 py-1.5 flex items-center gap-1.5 transition-colors border-b-2 ${
+                                bottomPanelTab === 'terminal'
+                                  ? 'border-blue-500 text-zinc-200'
+                                  : 'border-transparent text-zinc-500 hover:text-zinc-300'
+                              }`}
+                            >
+                              <TerminalIcon className="h-3 w-3" />
+                              Terminal
+                            </button>
+                          </div>
+
+                          {/* Separator */}
+                          <div className="h-4 w-px bg-zinc-800 mx-1" />
+
+                          {/* Terminal instance tabs (only when terminal tab is active) */}
+                          {bottomPanelTab === 'terminal' && (
+                            <div className="flex-1 flex items-center gap-0.5 px-1 overflow-x-auto scrollbar-none text-xs">
+                              {terminals.map((term) => (
+                                <div
+                                  key={term.id}
+                                  onClick={() => setActiveTerminalId(term.id)}
+                                  className={`group px-2 py-0.5 rounded flex items-center gap-1.5 cursor-pointer transition-colors whitespace-nowrap select-none ${
+                                    activeTerminalId === term.id
+                                      ? 'bg-zinc-800/80 text-zinc-200'
+                                      : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/40'
+                                  }`}
+                                >
+                                  <span className="text-[10px] text-green-400">$</span>
+                                  <span>{term.name}</span>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      closeTerminal(term.id);
+                                    }}
+                                    className={`rounded hover:bg-zinc-700 p-0.5 transition-opacity ${
+                                      activeTerminalId === term.id ? 'opacity-60 hover:opacity-100' : 'opacity-0 group-hover:opacity-60 hover:!opacity-100'
+                                    }`}
+                                    title="Close Terminal"
+                                  >
+                                    <X className="h-2.5 w-2.5" />
+                                  </button>
+                                </div>
+                              ))}
                             </div>
-                          ))}
-                          <button
-                            onClick={() => createNewTerminal()}
-                            className="px-2 py-1.5 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900 rounded"
-                            title="New Terminal"
-                          >
-                            <Plus className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                        {/* Terminal Content */}
-                        <div className="flex-1 bg-black/70 overflow-hidden font-mono text-xs text-zinc-300 relative">
-                          {terminals.map((term) => (
-                            <div
-                              key={term.id}
-                              id={term.id}
-                              className={`absolute inset-0 ${activeTerminalId === term.id ? 'block' : 'hidden'}`}
-                            />
-                          ))}
-                          {terminals.length === 0 && (
-                            <div className="absolute inset-0 flex items-center justify-center text-zinc-500">
+                          )}
+
+                          {/* Console filter label when console is active */}
+                          {bottomPanelTab === 'console' && (
+                            <div className="flex-1 flex items-center px-2 text-[10px] text-zinc-500">
+                              {isInstalling && <span className="text-blue-400 animate-pulse">Installing dependencies...</span>}
+                              {isRunning && !isInstalling && <span className="text-green-400">Dev server running</span>}
+                            </div>
+                          )}
+
+                          {/* Problems source label */}
+                          {bottomPanelTab === 'problems' && (
+                            <div className="flex-1 flex items-center px-2 text-[10px] text-zinc-500">
+                              {problems.filter(p => p.type === 'error').length} error{problems.filter(p => p.type === 'error').length !== 1 ? 's' : ''}, {problems.filter(p => p.type === 'warn').length} warning{problems.filter(p => p.type === 'warn').length !== 1 ? 's' : ''}
+                            </div>
+                          )}
+
+                          {/* Action buttons */}
+                          <div className="flex items-center gap-0.5 px-1.5 shrink-0 border-l border-zinc-800">
+                            {bottomPanelTab === 'terminal' && activeTerminalId && (
+                              <>
+                                <button
+                                  onClick={() => toggleTerminalSearch()}
+                                  className={`p-1 rounded transition-colors ${terminalSearchOpen ? 'bg-zinc-700 text-zinc-200' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'}`}
+                                  title="Search in Terminal (Ctrl+Shift+F)"
+                                >
+                                  <Search className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => clearTerminal(activeTerminalId)}
+                                  className="p-1 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded transition-colors"
+                                  title="Clear Terminal (Ctrl+K)"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </>
+                            )}
+                            {bottomPanelTab === 'terminal' && (
                               <button
                                 onClick={() => createNewTerminal()}
-                                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-zinc-300 flex items-center gap-2"
+                                className="p-1 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded transition-colors"
+                                title="New Terminal"
                               >
-                                <Plus className="h-4 w-4" />
-                                New Terminal
+                                <Plus className="h-3.5 w-3.5" />
                               </button>
+                            )}
+                            {bottomPanelTab === 'console' && consoleLogs.length > 0 && (
+                              <button
+                                onClick={() => setConsoleLogs([])}
+                                className="p-1 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded transition-colors"
+                                title="Clear Console"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Terminal Search Bar (only when terminal tab is active) */}
+                        {bottomPanelTab === 'terminal' && terminalSearchOpen && (
+                          <div className="border-b border-zinc-800 bg-zinc-900/90 px-2 py-1 flex items-center gap-2 shrink-0">
+                            <Search className="h-3 w-3 text-zinc-500 shrink-0" />
+                            <input
+                              ref={terminalSearchRef}
+                              type="text"
+                              value={terminalSearchQuery}
+                              onChange={(e) => {
+                                setTerminalSearchQuery(e.target.value);
+                                if (e.target.value) searchInTerminal(e.target.value, 'next');
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  searchInTerminal(terminalSearchQuery, e.shiftKey ? 'prev' : 'next');
+                                }
+                                if (e.key === 'Escape') {
+                                  setTerminalSearchOpen(false);
+                                  setTerminalSearchQuery('');
+                                  const activeTerm = terminals.find(t => t.id === activeTerminalId);
+                                  activeTerm?.searchAddon?.clearDecorations?.();
+                                }
+                              }}
+                              placeholder="Find in terminal..."
+                              className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500"
+                              autoComplete="off"
+                            />
+                            <button
+                              onClick={() => searchInTerminal(terminalSearchQuery, 'prev')}
+                              className="p-0.5 text-zinc-400 hover:text-zinc-200 rounded hover:bg-zinc-800"
+                              title="Previous match (Shift+Enter)"
+                            >
+                              <ChevronLeft className="h-3.5 w-3.5 rotate-90" />
+                            </button>
+                            <button
+                              onClick={() => searchInTerminal(terminalSearchQuery, 'next')}
+                              className="p-0.5 text-zinc-400 hover:text-zinc-200 rounded hover:bg-zinc-800"
+                              title="Next match (Enter)"
+                            >
+                              <ChevronRight className="h-3.5 w-3.5 rotate-90" />
+                            </button>
+                            <button
+                              onClick={() => {
+                                setTerminalSearchOpen(false);
+                                setTerminalSearchQuery('');
+                                const activeTerm = terminals.find(t => t.id === activeTerminalId);
+                                activeTerm?.searchAddon?.clearDecorations?.();
+                              }}
+                              className="p-0.5 text-zinc-400 hover:text-zinc-200 rounded hover:bg-zinc-800"
+                              title="Close search"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        )}
+
+                        {/* ═══ Panel Content ═══ */}
+                        <div className="flex-1 overflow-hidden relative">
+
+                          {/* ── Console Panel ── */}
+                          {bottomPanelTab === 'console' && (
+                            <div className="absolute inset-0 overflow-y-auto bg-[#0B0B0F] font-mono text-xs p-2 space-y-0.5">
+                              {consoleLogs.length === 0 ? (
+                                <div className="flex items-center justify-center h-full text-zinc-500 text-sm">
+                                  <div className="text-center">
+                                    <ScrollText className="h-8 w-8 mx-auto mb-2 opacity-40" />
+                                    <p>Console output will appear here</p>
+                                    <p className="text-[10px] mt-1 opacity-60">npm install, dev server logs, build errors</p>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
+                                  {consoleLogs.map((log) => (
+                                    <div
+                                      key={log.id}
+                                      className={`flex items-start gap-2 py-0.5 px-1 rounded hover:bg-white/5 ${
+                                        log.type === 'error' ? 'text-red-400 bg-red-950/20' :
+                                        log.type === 'warn' ? 'text-yellow-400 bg-yellow-950/10' :
+                                        log.type === 'success' ? 'text-green-400' :
+                                        log.type === 'info' ? 'text-blue-400' :
+                                        'text-zinc-400'
+                                      }`}
+                                    >
+                                      <span className="shrink-0 mt-0.5">
+                                        {log.type === 'error' && <XCircle className="h-3 w-3" />}
+                                        {log.type === 'warn' && <AlertTriangle className="h-3 w-3" />}
+                                        {log.type === 'success' && <CheckCircle2 className="h-3 w-3" />}
+                                        {log.type === 'info' && <Info className="h-3 w-3" />}
+                                        {log.type === 'output' && <ChevronRight className="h-3 w-3 opacity-40" />}
+                                      </span>
+                                      <span className="flex-1 break-all whitespace-pre-wrap leading-relaxed">{log.message}</span>
+                                      <span className="text-[9px] text-zinc-600 shrink-0 tabular-nums">
+                                        {log.timestamp.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                      </span>
+                                    </div>
+                                  ))}
+                                  <div ref={consoleEndRef} />
+                                </>
+                              )}
+                            </div>
+                          )}
+
+                          {/* ── Problems Panel ── */}
+                          {bottomPanelTab === 'problems' && (
+                            <div className="absolute inset-0 overflow-y-auto bg-[#0B0B0F] font-mono text-xs p-2">
+                              {problems.length === 0 ? (
+                                <div className="flex items-center justify-center h-full text-zinc-500 text-sm">
+                                  <div className="text-center">
+                                    <CheckCircle2 className="h-8 w-8 mx-auto mb-2 text-green-500/40" />
+                                    <p>No problems detected</p>
+                                    <p className="text-[10px] mt-1 opacity-60">Errors and warnings from the build will appear here</p>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="space-y-0.5">
+                                  {problems.map((problem) => (
+                                    <div
+                                      key={problem.id}
+                                      className={`flex items-start gap-2 py-1 px-2 rounded ${
+                                        problem.type === 'error'
+                                          ? 'bg-red-950/30 border-l-2 border-red-500'
+                                          : 'bg-yellow-950/20 border-l-2 border-yellow-500'
+                                      }`}
+                                    >
+                                      <span className="shrink-0 mt-0.5">
+                                        {problem.type === 'error' ? (
+                                          <XCircle className="h-3.5 w-3.5 text-red-400" />
+                                        ) : (
+                                          <AlertTriangle className="h-3.5 w-3.5 text-yellow-400" />
+                                        )}
+                                      </span>
+                                      <div className="flex-1 min-w-0">
+                                        <p className={`break-all whitespace-pre-wrap ${
+                                          problem.type === 'error' ? 'text-red-300' : 'text-yellow-300'
+                                        }`}>
+                                          {problem.message}
+                                        </p>
+                                        {problem.source && (
+                                          <p className="text-[10px] text-zinc-500 mt-0.5">
+                                            Source: {problem.source}
+                                          </p>
+                                        )}
+                                      </div>
+                                      <span className="text-[9px] text-zinc-600 shrink-0 tabular-nums">
+                                        {problem.timestamp.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* ── Terminal Panel ── */}
+                          {bottomPanelTab === 'terminal' && (
+                            <div
+                              className="absolute inset-0 bg-[#0B0B0F] overflow-hidden font-mono text-xs text-zinc-300"
+                              onContextMenu={(e) => {
+                                if (activeTerminalId) {
+                                  e.preventDefault();
+                                  setTerminalContextMenu({ x: e.clientX, y: e.clientY, terminalId: activeTerminalId });
+                                }
+                              }}
+                            >
+                              {terminals.map((term) => (
+                                <div
+                                  key={term.id}
+                                  id={term.id}
+                                  className={`absolute inset-0 ${activeTerminalId === term.id ? 'block' : 'hidden'}`}
+                                />
+                              ))}
+                              {terminals.length === 0 && (
+                                <div className="absolute inset-0 flex items-center justify-center text-zinc-500">
+                                  <button
+                                    onClick={() => createNewTerminal()}
+                                    className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-zinc-300 flex items-center gap-2 text-sm"
+                                  >
+                                    <Plus className="h-4 w-4" />
+                                    New Terminal
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
                       </div>
                     </Panel>
+
+                    {/* Terminal Right-Click Context Menu */}
+                    {terminalContextMenu && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setTerminalContextMenu(null)} />
+                        <div
+                          className="fixed z-50 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl py-1 min-w-[160px]"
+                          style={{ left: terminalContextMenu.x, top: terminalContextMenu.y }}
+                        >
+                          <button
+                            onClick={copyFromTerminal}
+                            className="w-full px-3 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-800 flex items-center justify-between"
+                          >
+                            Copy
+                            <span className="text-[10px] text-zinc-500 ml-4">Ctrl+C</span>
+                          </button>
+                          <button
+                            onClick={pasteToTerminal}
+                            className="w-full px-3 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-800 flex items-center justify-between"
+                          >
+                            Paste
+                            <span className="text-[10px] text-zinc-500 ml-4">Ctrl+V</span>
+                          </button>
+                          <div className="border-t border-zinc-800 my-1" />
+                          <button
+                            onClick={() => {
+                              clearTerminal(terminalContextMenu.terminalId);
+                              setTerminalContextMenu(null);
+                            }}
+                            className="w-full px-3 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-800 flex items-center justify-between"
+                          >
+                            Clear
+                            <span className="text-[10px] text-zinc-500 ml-4">Ctrl+K</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              toggleTerminalSearch();
+                              setTerminalContextMenu(null);
+                            }}
+                            className="w-full px-3 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-800 flex items-center justify-between"
+                          >
+                            Find
+                            <span className="text-[10px] text-zinc-500 ml-4">Ctrl+Shift+F</span>
+                          </button>
+                          <div className="border-t border-zinc-800 my-1" />
+                          <button
+                            onClick={() => {
+                              const activeTerm = terminals.find(t => t.id === terminalContextMenu.terminalId);
+                              if (activeTerm) {
+                                activeTerm.terminal.selectAll();
+                              }
+                              setTerminalContextMenu(null);
+                            }}
+                            className="w-full px-3 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-800"
+                          >
+                            Select All
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </PanelGroup>
 
-                  {/* Status Bar - FIXED: Proper overflow handling */}
-                  <div className="border border-zinc-800 bg-zinc-950/80 px-3 py-1 flex items-center justify-between text-xs text-zinc-400 shrink-0 rounded-xl mt-2 box-border overflow-hidden">
-                    <div className="flex items-center gap-4 min-w-0">
-                      <span className="hidden sm:inline">Ln 1, Col 1</span>
-                      <span className="hidden sm:inline">UTF-8</span>
-                    </div>
-                    <div className="shrink-0 truncate">
-                      Chat: {isChatOpen ? 'Open' : 'Closed'}
-                    </div>
-                  </div>
+                  {/* Outer status removed — blue status bar lives inside the editor panel */}
                 </Panel>
               </PanelGroup>
             </Panel>
@@ -2011,6 +2878,76 @@ export default function StackBlitzIDE({
           </PanelGroup>
         </div>
       </div>
+
+      {/* ── Quick Open Dialog (Ctrl+P) ── */}
+      {showQuickOpen && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]" onClick={() => setShowQuickOpen(false)}>
+          <div className="absolute inset-0 bg-black/40" />
+          <div
+            className="relative w-full max-w-lg bg-zinc-900 border border-zinc-700 rounded-lg shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800">
+              <Search className="h-4 w-4 text-zinc-400 shrink-0" />
+              <input
+                ref={quickOpenRef}
+                type="text"
+                value={quickOpenQuery}
+                onChange={(e) => setQuickOpenQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setShowQuickOpen(false);
+                  if (e.key === 'Enter' && filteredQuickOpenFiles.length > 0) {
+                    handleFileSelect(filteredQuickOpenFiles[0]);
+                    setShowQuickOpen(false);
+                  }
+                }}
+                placeholder="Search files by name... (type to filter)"
+                className="flex-1 bg-transparent text-sm text-white placeholder-zinc-500 focus:outline-none"
+                autoComplete="off"
+              />
+              <span className="text-[10px] text-zinc-500 shrink-0 hidden sm:inline">
+                {filteredQuickOpenFiles.length} result{filteredQuickOpenFiles.length !== 1 ? 's' : ''}
+              </span>
+            </div>
+            <div className="max-h-64 overflow-y-auto">
+              {filteredQuickOpenFiles.length === 0 ? (
+                <div className="px-4 py-6 text-center text-sm text-zinc-500">
+                  No files matching &ldquo;{quickOpenQuery}&rdquo;
+                </div>
+              ) : (
+                filteredQuickOpenFiles.map((filePath, idx) => {
+                  const parts = filePath.split('/');
+                  const fileName = parts.pop() || filePath;
+                  const dir = parts.join('/');
+                  const icon = getFileIcon(fileName);
+                  return (
+                    <button
+                      key={filePath}
+                      onClick={() => {
+                        handleFileSelect(filePath);
+                        setShowQuickOpen(false);
+                      }}
+                      className={`w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-zinc-800 transition-colors ${
+                        idx === 0 ? 'bg-zinc-800/50' : ''
+                      }`}
+                    >
+                      <span className={`text-[10px] font-bold ${icon.color} w-4 text-center shrink-0`}>{icon.icon}</span>
+                      <span className="text-sm text-zinc-200 truncate">{fileName}</span>
+                      {dir && <span className="text-xs text-zinc-500 truncate ml-1">{dir}</span>}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+            <div className="px-3 py-1.5 border-t border-zinc-800 text-[10px] text-zinc-500 flex items-center gap-3">
+              <span>↵ Open</span>
+              <span>Esc Close</span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
-}
+});
+
+export default StackBlitzIDE;
