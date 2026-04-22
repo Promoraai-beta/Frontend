@@ -1,5 +1,8 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
+# Debug/diagnostic endpoints — never commit
+/app/api/check-env/
+
 # dependencies
 /node_modules
 
