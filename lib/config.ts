@@ -19,20 +19,68 @@ export const API_ENDPOINTS = {
 // Admin/Support email for contact links
 export const ADMIN_EMAIL = process.env.NEXT_PUBLIC_ADMIN_EMAIL || 'admin@promora.ai';
 
-// StackBlitz WebContainer configuration
-// API key should be set in .env.local as NEXT_PUBLIC_STACKBLITZ_API_KEY
-export const STACKBLITZ_WEBCONTAINER_API_KEY = process.env.NEXT_PUBLIC_STACKBLITZ_API_KEY;
+// StackBlitz WebContainer — PAUSED (using local Docker / Azure Container instead)
+// export const STACKBLITZ_WEBCONTAINER_API_KEY = process.env.NEXT_PUBLIC_STACKBLITZ_API_KEY;
+// if (!STACKBLITZ_WEBCONTAINER_API_KEY && process.env.NODE_ENV !== 'development') {
+//   console.warn('⚠️ WARNING: NEXT_PUBLIC_STACKBLITZ_API_KEY is not set. WebContainer may not work properly in production.');
+// }
+// export const STACKBLITZ_CONFIG = {
+//   apiKey: STACKBLITZ_WEBCONTAINER_API_KEY,
+//   bootOptions: {}
+// };
 
-if (!STACKBLITZ_WEBCONTAINER_API_KEY && process.env.NODE_ENV !== 'development') {
-  console.warn('⚠️ WARNING: NEXT_PUBLIC_STACKBLITZ_API_KEY is not set. WebContainer may not work properly in production.');
-}
-
-export const STACKBLITZ_CONFIG = {
-  apiKey: STACKBLITZ_WEBCONTAINER_API_KEY,
-  // WebContainer boot options
-  bootOptions: {
-    // API key is automatically used by @webcontainer/api if available
+// Azure Container IDE feature flag
+// Set NEXT_PUBLIC_USE_AZURE_CONTAINER=true to use Azure containers instead of WebContainer
+// Or set localStorage.USE_AZURE_CONTAINER='true' for runtime override (used by test pages)
+// Default: false (uses WebContainer)
+// This function checks at runtime, not module load time
+export const getUseAzureContainer = (): boolean => {
+  // Check localStorage first (for test pages that want to override)
+  if (typeof window !== 'undefined') {
+    const localStorageFlag = localStorage.getItem('USE_AZURE_CONTAINER');
+    if (localStorageFlag === 'true') {
+      return true;
+    }
   }
+  // Fall back to environment variable
+  return process.env.NEXT_PUBLIC_USE_AZURE_CONTAINER === 'true';
+};
+
+// For backward compatibility, export a getter that checks at runtime
+export const USE_AZURE_CONTAINER = getUseAzureContainer();
+
+/**
+ * Check if we're running on localhost (development)
+ */
+export const isLocalhost = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  const hostname = window.location.hostname;
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+};
+
+/**
+ * Check if a URL is a localhost URL (local Docker mode)
+ */
+export const isLocalDockerUrl = (url: string): boolean => {
+  try {
+    const urlObj = new URL(url);
+    return urlObj.hostname === 'localhost' || urlObj.hostname === '127.0.0.1' || urlObj.hostname === '[::1]';
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Check if local Docker mode is allowed
+ * Local Docker should only work when:
+ * 1. Running on localhost (development)
+ * 2. Not in production environment
+ */
+export const isLocalDockerAllowed = (): boolean => {
+  if (process.env.NODE_ENV === 'production') {
+    return false;
+  }
+  return isLocalhost();
 };
 
 // WebSocket configuration

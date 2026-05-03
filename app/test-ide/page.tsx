@@ -1,17 +1,18 @@
 'use client';
 
-import React, { useRef, useState, useCallback } from 'react';
+import React, { useRef, useState, useCallback, useEffect } from 'react';
+import { API_BASE_URL } from '@/lib/config';
 import dynamic from 'next/dynamic';
-import type { StackBlitzIDEHandle } from '@/components/assessment/StackBlitzIDE';
-
-const StackBlitzIDE = dynamic(() => import('@/components/assessment/StackBlitzIDE'), {
-  ssr: false,
-  loading: () => (
-    <div className="flex items-center justify-center h-screen bg-zinc-950 text-zinc-400 text-sm">
-      Loading IDE sandbox...
-    </div>
-  ),
-});
+// StackBlitz PAUSED — using local Docker / Azure Container instead
+// import type { StackBlitzIDEHandle } from '@/components/assessment/StackBlitzIDE';
+// const StackBlitzIDE = dynamic(() => import('@/components/assessment/StackBlitzIDE'), {
+//   ssr: false,
+//   loading: () => (
+//     <div className="flex items-center justify-center h-screen bg-zinc-950 text-zinc-400 text-sm">
+//       Loading IDE sandbox...
+//     </div>
+//   ),
+// });
 
 // ── Sample React + Vite project ──────────────────────────────
 const SAMPLE_TEMPLATE_FILES: Record<string, string> = {
@@ -435,17 +436,85 @@ const SAMPLE_TASKS = [
 ];
 
 export default function TestIDEPage() {
-  const ideRef = useRef<StackBlitzIDEHandle>(null);
+  // StackBlitz PAUSED
+  const ideRef = useRef<any>(null);
+  const [sandboxSessionId, setSandboxSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<any[]>([]);
   const [inputMessage, setInputMessage] = useState('');
   const [selectedLLM, setSelectedLLM] = useState<string | null>(null);
   const [showLLMSelector, setShowLLMSelector] = useState(false);
+  const [serverCStatus, setServerCStatus] = useState<{ loading: boolean; result: string | null; violations?: any[] }>({
+    loading: false,
+    result: null,
+    violations: [],
+  });
+
+  // Fetch sandbox session so IDE events (file ops, terminal, chat) are stored for Server C
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/test/sandbox-session`);
+        const data = await res.json();
+        if (!cancelled && data.success && data.sessionId) setSandboxSessionId(data.sessionId);
+      } catch {
+        // Don't fallback to test-sandbox — backend session wouldn't exist
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleTestServerC = useCallback(async () => {
+    const sessionId = sandboxSessionId || 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
+    setServerCStatus((s) => ({ ...s, loading: true, result: null, violations: [] }));
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/test/server-c?sessionId=${encodeURIComponent(sessionId)}`);
+      const data = await res.json();
+      if (res.ok && data.success) {
+        const w = data.serverC?.watcher;
+        const violations = w?.violations ?? [];
+        setServerCStatus({
+          loading: false,
+          result: `OK • violations: ${violations.length} • risk: ${w?.riskScore ?? 0}`,
+          violations,
+        });
+      } else {
+        setServerCStatus({
+          loading: false,
+          result: `Error: ${data.message || data.error || 'Unknown'}`,
+          violations: [],
+        });
+      }
+    } catch (err: any) {
+      setServerCStatus({
+        loading: false,
+        result: `Failed: ${err?.message || 'Network error'}`,
+        violations: [],
+      });
+    }
+  }, [sandboxSessionId]);
 
   const handleSendMessage = useCallback(
-    (msg: string) => {
+    async (msg: string) => {
       if (!msg.trim()) return;
       setMessages((prev) => [...prev, { role: 'user', content: msg }]);
-      // Echo back (no real LLM connected in sandbox mode)
+      // Track prompt so Server C can detect solution requests (e.g. "solve entire problem")
+      if (sandboxSessionId) {
+        try {
+          await fetch(`${API_BASE_URL}/api/ai-interactions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sessionId: sandboxSessionId,
+              eventType: 'prompt_sent',
+              promptText: msg,
+            }),
+          });
+        } catch (e) {
+          console.warn('Failed to track prompt', e);
+        }
+      }
+      // Echo back (no real LLM in sandbox)
       setTimeout(() => {
         setMessages((prev) => [
           ...prev,
@@ -456,7 +525,7 @@ export default function TestIDEPage() {
         ]);
       }, 300);
     },
-    []
+    [sandboxSessionId]
   );
 
   const handleCollectFiles = useCallback(async () => {
@@ -478,6 +547,25 @@ export default function TestIDEPage() {
         </span>
         <div className="flex-1" />
         <button
+          onClick={handleTestServerC}
+          disabled={serverCStatus.loading}
+          className="px-2.5 py-1 text-[11px] bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded transition-colors"
+          title="Verify MCP Server C (monitoring) connectivity"
+        >
+          {serverCStatus.loading ? 'Checking…' : 'Test Server C'}
+        </button>
+        {serverCStatus.result && (
+          <span
+            className="text-[10px] text-zinc-400 max-w-[280px] truncate"
+            title={serverCStatus.violations?.length
+              ? `${serverCStatus.result}\n${serverCStatus.violations.map((v: any) => v.description || v.type).join('\n')}`
+              : serverCStatus.result}
+          >
+            {serverCStatus.result}
+            {serverCStatus.violations?.length ? ` (${serverCStatus.violations.map((v: any) => v.type).join(', ')})` : ''}
+          </span>
+        )}
+        <button
           onClick={handleCollectFiles}
           className="px-2.5 py-1 text-[11px] bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
         >
@@ -491,31 +579,9 @@ export default function TestIDEPage() {
         </a>
       </div>
 
-      {/* IDE fills rest */}
-      <div className="flex-1 min-h-0">
-        <StackBlitzIDE
-          ref={ideRef}
-          sessionId={null}
-          templateFiles={SAMPLE_TEMPLATE_FILES}
-          tasks={SAMPLE_TASKS}
-          messages={messages}
-          onSendMessage={handleSendMessage}
-          inputMessage={inputMessage}
-          setInputMessage={setInputMessage}
-          selectedLLM={selectedLLM}
-          showLLMSelector={showLLMSelector}
-          onSelectLLM={(llm: string) => {
-            setSelectedLLM(llm);
-            setShowLLMSelector(false);
-          }}
-          onFileChange={(path: string, content: string) => {
-            // No-op in sandbox — just log
-            console.log(`[sandbox] file changed: ${path}`);
-          }}
-          onTerminalOutput={(output: string) => {
-            console.log('[sandbox] terminal:', output);
-          }}
-        />
+      {/* IDE fills rest — StackBlitz PAUSED, using Azure Container / local Docker */}
+      <div className="flex-1 min-h-0 flex items-center justify-center bg-zinc-950 text-zinc-400 text-sm">
+        <p>StackBlitz WebContainer is paused. Use the main assessment page with Azure Container IDE.</p>
       </div>
     </div>
   );

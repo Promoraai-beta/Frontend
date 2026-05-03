@@ -11,6 +11,10 @@
     "start:prod": "NODE_ENV=production node .next/standalone/server.js"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.72",
+    "@ai-sdk/google": "^3.0.65",
+    "@ai-sdk/openai": "^3.0.53",
+    "@ai-sdk/react": "^3.0.170",
     "@emotion/is-prop-valid": "latest",
     "@hookform/resolvers": "^3.10.0",
     "@monaco-editor/react": "^4.7.0",
@@ -52,6 +56,7 @@
     "@xterm/addon-search": "^0.16.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^5.5.0",
+    "ai": "^6.0.168",
     "autoprefixer": "^10.4.20",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -73,6 +78,7 @@
     "react-easy-crop": "^5.5.3",
     "react-hook-form": "^7.60.0",
     "react-icons": "latest",
+    "react-is": "^19.2.5",
     "react-resizable-panels": "^2.1.7",
     "recharts": "latest",
     "sonner": "^1.7.4",

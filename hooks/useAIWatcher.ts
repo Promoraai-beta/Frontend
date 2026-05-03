@@ -8,6 +8,11 @@ interface TrackEventParams {
   promptText?: string;
   responseText?: string;
   tokensUsed?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  latencyMs?: number;
+  tabId?: string;
+  conversationTurn?: number;
   codeSnippet?: string;
   codeLineNumber?: number;
   codeBefore?: string;
@@ -44,6 +49,11 @@ export function useAIWatcher() {
           promptText: params.promptText,
           responseText: params.responseText,
           tokensUsed: params.tokensUsed,
+          promptTokens: params.promptTokens,
+          completionTokens: params.completionTokens,
+          latencyMs: params.latencyMs,
+          tabId: params.tabId,
+          conversationTurn: params.conversationTurn,
           codeSnippet: params.codeSnippet,
           codeLineNumber: params.codeLineNumber,
           codeBefore: params.codeBefore,
@@ -53,7 +63,13 @@ export function useAIWatcher() {
       });
 
       if (!response.ok) {
-        console.error('AI Watcher: Failed to track event', response.statusText);
+        const body = await response.text();
+        try {
+          const parsed = body ? JSON.parse(body) : {};
+          console.error('AI Watcher: Failed to track event', response.status, response.statusText, parsed?.error ?? body);
+        } catch {
+          console.error('AI Watcher: Failed to track event', response.status, response.statusText, body);
+        }
       }
     } catch (error) {
       // Silent fail - don't interrupt user experience
@@ -62,14 +78,27 @@ export function useAIWatcher() {
   }, []);
 
   // Track when code is copied from AI chat
-  const trackCodeCopy = useCallback((codeSnippet: string, model?: string) => {
+  // Fires 'copy' event immediately AND stores in ref for paste correlation
+  const trackCodeCopy = useCallback((codeSnippet: string, model?: string, sessionId?: string | null) => {
+    // Store for paste correlation (30s window)
     lastCopiedCodeRef.current = {
       text: codeSnippet,
       timestamp: Date.now(),
       model,
       source: 'ai_response'
     };
-  }, []);
+    // Fire the event immediately so it reaches the DB regardless of whether
+    // the candidate pastes in the IDE
+    if (sessionId) {
+      trackEvent({
+        sessionId,
+        eventType: 'copy',
+        model,
+        codeSnippet: codeSnippet.substring(0, 10000),
+        metadata: { lineCount: codeSnippet.split('\n').length, source: 'ai_chat_copy_button' }
+      }).catch(() => {});
+    }
+  }, [trackEvent]);
 
   // Track when code is pasted into editor
   const trackCodePaste = useCallback(async (

@@ -1,9 +1,13 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+
+/** Set NEXT_PUBLIC_DEBUG_ASSESSMENT=true to log template conversion / Azure mode diagnostics. */
+const DEBUG_ASSESSMENT = process.env.NEXT_PUBLIC_DEBUG_ASSESSMENT === 'true';
 import dynamic from 'next/dynamic';
 import { formatDistanceToNow } from 'date-fns';
-import { getLLMService, isLLMAvailable, getAvailableLLMs } from '@/lib/llm';
+import { isLLMAvailable, getAvailableLLMs } from '@/lib/llm';
+import { selectFilesForContext, type FullWorkflowContext } from '@/lib/llm/context';
 import { problems as allProblems } from '@/lib/problems';
 import { useAIWatcher } from '@/hooks/useAIWatcher';
 import { API_BASE_URL, WS_VIDEO_URL } from '@/lib/config';
@@ -11,11 +15,11 @@ import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { SignupPromptModal } from '@/components/assessment/signup-prompt-modal';
+import AIAssistantPanel from '@/components/assessment/AIAssistantPanel';
 import { useAuth } from '@/components/auth-provider';
 import { useRouter } from 'next/navigation';
 import { 
   FileText, 
-  MessageSquare, 
   Code, 
   Terminal, 
   Home, 
@@ -28,7 +32,10 @@ import {
   Radio,
   CheckCircle,
   XCircle,
-  AlertCircle
+  AlertCircle,
+  ExternalLink,
+  Loader2,
+  Sparkles
 } from 'lucide-react';
 
 // Dynamically import Monaco to avoid SSR issues
@@ -37,15 +44,30 @@ const MonacoEditor = dynamic(() => import('@monaco-editor/react'), {
   loading: () => <div className="flex items-center justify-center h-full">Loading editor...</div>
 });
 
-import type { StackBlitzIDEHandle } from '@/components/assessment/StackBlitzIDE';
+// StackBlitz PAUSED — using local Docker / Azure Container instead
+// import type { StackBlitzIDEHandle } from '@/components/assessment/StackBlitzIDE';
+import { getUseAzureContainer } from '@/lib/config';
 
-// Dynamically import StackBlitzIDE for template-based assessments
-const StackBlitzIDE = dynamic(() => import('@/components/assessment/StackBlitzIDE'), {
+// const StackBlitzIDE = dynamic(() => import('@/components/assessment/StackBlitzIDE'), {
+//   ssr: false,
+//   loading: () => <div className="flex items-center justify-center h-full">Loading IDE...</div>
+// });
+
+// Dynamically import AzureContainerIDE (Azure Container Instance)
+const AzureContainerIDE = dynamic(() => import('@/components/assessment/AzureContainerIDE'), {
   ssr: false,
-  loading: () => <div className="flex items-center justify-center h-full">Loading IDE...</div>
+  loading: () => <div className="flex items-center justify-center h-full">Loading Azure Container IDE...</div>
 });
 
 import type { Message, TabType } from '@/types/assessment';
+import DatabaseTabView from '@/components/assessment/DatabaseTabView';
+import DocsTabView from '@/components/assessment/DocsTabView';
+
+export interface TestActivityCallbacks {
+  onTabChange?: (tab: TabType) => void;
+  onChatMessage?: () => void;
+  onIDEEdit?: () => void;
+}
 
 interface AssessmentPageProps {
   sessionData?: any;
@@ -57,8 +79,323 @@ interface AssessmentPageProps {
     techStack?: string[];
     jobTitle?: string;
     company?: string;
+    hasDesign?: boolean;
+    hasDatabase?: boolean;
+    hasSheets?: boolean;
+    hasDocs?: boolean;
+    components?: string[];
+    figmaTemplateId?: string;
+    figmaFileKey?: string; // Figma file key for the design space (same as figmaTemplateId, preferred name)
   };
   templateFiles?: Record<string, string>; // Template files from backend
+  onTestActivity?: TestActivityCallbacks;
+}
+
+function AddressBar({
+  currentUrl,
+  onGo,
+  onOpenInNewTab,
+  placeholder
+}: {
+  currentUrl: string;
+  onGo: (url: string) => void;
+  onOpenInNewTab: (url: string) => void;
+  placeholder?: string;
+}) {
+  const [input, setInput] = useState(currentUrl);
+  const [isEditing, setIsEditing] = useState(false);
+  useEffect(() => { setInput(currentUrl); }, [currentUrl]);
+  const submit = (asNewTab: boolean) => {
+    const url = input.trim();
+    if (!url) return;
+    if (asNewTab) onOpenInNewTab(url);
+    else onGo(url);
+    setIsEditing(false);
+  };
+  const getDisplayUrl = (url: string): string => {
+    if (!url) return '';
+    try {
+      if (url.includes('figma.com')) {
+        const match = url.match(/figma\.com\/file\/([^/?]+)/);
+        if (match) return `figma.com/file/${match[1]}`;
+        return 'figma.com';
+      }
+      const urlObj = new URL(url);
+      return urlObj.hostname + urlObj.pathname.substring(0, 30);
+    } catch {
+      return url.length > 40 ? url.substring(0, 37) + '...' : url;
+    }
+  };
+  return (
+    <>
+      {isEditing ? (
+        <input
+          type="url"
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { 
+            if (e.key === 'Enter') submit(false);
+            if (e.key === 'Escape') { setIsEditing(false); setInput(currentUrl); }
+          }}
+          onBlur={() => setIsEditing(false)}
+          placeholder={placeholder}
+          className="flex-1 min-w-0 px-2 py-1 text-sm bg-zinc-800 border border-zinc-700 rounded text-white placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500/50"
+          autoFocus
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => setIsEditing(true)}
+          className="flex-1 min-w-0 px-2 py-1 text-sm bg-zinc-800 border border-zinc-700 rounded text-zinc-400 hover:text-zinc-200 hover:border-zinc-600 text-left truncate"
+        >
+          {getDisplayUrl(currentUrl) || placeholder || 'Enter URL'}
+        </button>
+      )}
+      <button type="button" onClick={() => submit(false)} className="px-2 py-1 text-xs text-zinc-300 hover:text-white border border-zinc-600 rounded hover:bg-zinc-800 shrink-0">Go</button>
+      <button type="button" onClick={() => submit(true)} className="px-2 py-1 text-xs text-zinc-300 hover:text-white border border-zinc-600 rounded hover:bg-zinc-800 shrink-0">New tab</button>
+    </>
+  );
+}
+
+type BrowserTab = { id: string; label: string; url: string };
+
+function DesignTabView({
+  sessionId,
+  figmaUrl,
+  assessmentMeta,
+  onProvisionFigma,
+  provisioning,
+  mcpInsights,
+  onRefreshInsights,
+  onBackToTasks
+}: {
+  sessionId?: string;
+  figmaUrl: string | null;
+  assessmentMeta?: AssessmentPageProps['assessmentMeta'];
+  onProvisionFigma: () => Promise<void>;
+  provisioning: boolean;
+  mcpInsights: Array<{ id: string; source: string; payload: any; createdAt: string }>;
+  onRefreshInsights: () => Promise<void>;
+  onBackToTasks: () => void;
+}) {
+  const figmaEmbedUrl = figmaUrl
+    ? `https://www.figma.com/embed?embed_host=share&url=${encodeURIComponent(figmaUrl)}`
+    : null;
+  const [browserTabs, setBrowserTabs] = useState<BrowserTab[]>(() =>
+    figmaEmbedUrl ? [{ id: 'design', label: 'Design file', url: figmaEmbedUrl }] : []
+  );
+  const [activeTabId, setActiveTabId] = useState<string | null>(figmaEmbedUrl ? 'design' : null);
+  const activeTab = activeTabId ? browserTabs.find(t => t.id === activeTabId) : null;
+  useEffect(() => {
+    if (sessionId) onRefreshInsights();
+  }, [sessionId]);
+  useEffect(() => {
+    if (figmaEmbedUrl && browserTabs.length === 0) {
+      setBrowserTabs([{ id: 'design', label: 'Design file', url: figmaEmbedUrl }]);
+      setActiveTabId('design');
+    } else if (figmaEmbedUrl && browserTabs[0]?.id === 'design') {
+      setBrowserTabs(prev => prev.map(t => t.id === 'design' ? { ...t, url: figmaEmbedUrl } : t));
+    }
+  }, [figmaEmbedUrl]);
+  const closeTab = (id: string) => {
+    const next = browserTabs.filter(t => t.id !== id);
+    setBrowserTabs(next);
+    if (activeTabId === id) setActiveTabId(next[0]?.id || null);
+  };
+  const addNewTab = (url?: string) => {
+    const id = `tab-${Date.now()}`;
+    const openUrl = url && url.trim() ? url.trim() : 'about:blank';
+    const label = openUrl === 'about:blank' ? 'New tab' : new URL(openUrl).hostname || 'New tab';
+    setBrowserTabs(prev => [...prev, { id, label, url: openUrl }]);
+    setActiveTabId(id);
+  };
+  const openLinkInNewTab = (url: string) => {
+    const u = url.trim();
+    if (!u) return;
+    const id = `tab-${Date.now()}`;
+    try {
+      const label = u.startsWith('about:') ? 'New tab' : (new URL(u).hostname || 'New tab');
+      setBrowserTabs(prev => [...prev, { id, label, url: u }]);
+      setActiveTabId(id);
+    } catch {
+      setBrowserTabs(prev => [...prev, { id, label: 'New tab', url: u }]);
+      setActiveTabId(id);
+    }
+  };
+  const navigateCurrentTab = (url: string) => {
+    const u = url.trim();
+    if (!u || !activeTabId) return;
+    try {
+      const label = u.startsWith('about:') ? 'New tab' : (new URL(u).hostname || 'Tab');
+      setBrowserTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, url: u, label } : t));
+    } catch {
+      setBrowserTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, url: u } : t));
+    }
+  };
+  const latestFigma = mcpInsights.find(i => i.source === 'figma');
+  const payload = latestFigma?.payload as Record<string, unknown> | undefined;
+  const hasMultipleTabs = browserTabs.length > 1;
+  useEffect(() => {
+    const handleMessage = (e: MessageEvent) => {
+      if (e.origin !== 'https://www.figma.com') return;
+      if (e.data?.type === 'figma-navigate' && e.data?.url) {
+        openLinkInNewTab(e.data.url);
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+  return (
+    <div className="flex-1 border border-zinc-800 bg-zinc-950/70 backdrop-blur-xl rounded-xl overflow-hidden flex flex-col min-h-0">
+      <div className="border-b border-zinc-800 bg-zinc-950/90 px-3 py-2 flex items-center gap-2 shrink-0">
+        {figmaEmbedUrl && hasMultipleTabs && (
+          <div className="flex items-center gap-1.5">
+            {browserTabs.map(tab => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTabId(tab.id)}
+                className={`group flex items-center gap-1 pl-2 pr-1 py-1 text-xs rounded border shrink-0 max-w-[120px] min-w-0 ${
+                  activeTabId === tab.id
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                    : 'bg-zinc-800/80 text-zinc-400 border-zinc-600 hover:text-zinc-200'
+                }`}
+              >
+                <span className="truncate">{tab.label}</span>
+                <span
+                  className="shrink-0 w-3.5 h-3.5 flex items-center justify-center rounded hover:bg-zinc-600"
+                  onClick={e => { e.stopPropagation(); closeTab(tab.id); }}
+                  aria-label="Close tab"
+                >×</span>
+              </button>
+            ))}
+            <button type="button" onClick={() => addNewTab()} className="p-1 text-zinc-500 hover:text-zinc-300 rounded shrink-0" aria-label="New tab">+</button>
+          </div>
+        )}
+        <div className="flex-1" />
+        <button
+          onClick={onBackToTasks}
+          className="px-2 py-1 text-zinc-400 hover:text-zinc-200 text-xs border border-zinc-700 rounded hover:bg-zinc-800 shrink-0 flex items-center gap-1"
+        >
+          <ChevronRight className="h-3.5 w-3.5 rotate-180" />
+          <span className="hidden sm:inline">Tasks</span>
+        </button>
+      </div>
+      <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+        {figmaEmbedUrl ? (
+          <>
+            <iframe
+              key={activeTabId ?? 'design'}
+              src={activeTab?.url ?? figmaEmbedUrl}
+              title={activeTab?.label || 'Figma design space'}
+              className="flex-1 w-full min-h-[360px] border-0 bg-zinc-900"
+              allowFullScreen
+              referrerPolicy="no-referrer-when-downgrade"
+            />
+          </>
+        ) : assessmentMeta?.hasDesign ? (
+          <div className="flex-1 flex flex-col items-center justify-center gap-4 p-6">
+            <p className="text-zinc-400 text-sm">Get a Figma design space to work on your task.</p>
+            <button
+              onClick={onProvisionFigma}
+              disabled={provisioning}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-amber-500/10 border border-amber-500/30 text-amber-300 rounded-lg font-medium hover:bg-amber-500/20 transition-colors disabled:opacity-50"
+            >
+              {provisioning ? 'Opening design space...' : 'Open design space (Figma)'}
+            </button>
+          </div>
+        ) : null}
+        <div className="shrink-0 border-t border-zinc-800 bg-zinc-900/50 p-4">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-semibold text-white">Design activity (from MCP)</h3>
+            <button
+              onClick={onRefreshInsights}
+              className="text-xs text-zinc-400 hover:text-zinc-200"
+            >
+              Refresh
+            </button>
+          </div>
+          {payload && !payload.error ? (
+            <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-zinc-300">
+              {typeof payload.components_used === 'number' && (
+                <li>Components used: <span className="text-white font-medium">{String(payload.components_used)}</span></li>
+              )}
+              {typeof payload.frames_created === 'number' && (
+                <li>Frames created: <span className="text-white font-medium">{String(payload.frames_created)}</span></li>
+              )}
+              {typeof payload.layers_total === 'number' && (
+                <li>Layers total: <span className="text-white font-medium">{String(payload.layers_total)}</span></li>
+              )}
+              {typeof payload.uses_design_system === 'boolean' && (
+                <li>Uses design system: <span className="text-white font-medium">{payload.uses_design_system ? 'Yes' : 'No'}</span></li>
+              )}
+              {payload.last_modified != null && (
+                <li>Last modified: <span className="text-zinc-400">{String(payload.last_modified)}</span></li>
+              )}
+            </ul>
+          ) : latestFigma?.payload?.error ? (
+            <p className="text-sm text-amber-400">Error: {String((latestFigma.payload as any).error)}</p>
+          ) : (
+            <p className="text-sm text-zinc-500">No design activity yet. Work in the design space above; activity will appear here (refreshes from MCP).</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Official logo URLs for tabs (small icons)
+const FIGMA_LOGO = 'https://static.figma.com/app/icon/1/favicon.svg';
+const SHEETS_LOGO = 'https://www.gstatic.com/images/branding/product/1x/sheets_2020q4_48dp.png';
+
+function SheetsTabView({
+  sheetsUrl,
+  assessmentMeta,
+  onProvisionSheets,
+  provisioning,
+  onBackToTasks
+}: {
+  sheetsUrl: string | null;
+  assessmentMeta?: AssessmentPageProps['assessmentMeta'];
+  onProvisionSheets: () => Promise<void>;
+  provisioning: boolean;
+  onBackToTasks: () => void;
+}) {
+  return (
+    <div className="flex-1 border border-zinc-800 bg-zinc-950/70 backdrop-blur-xl rounded-xl overflow-hidden flex flex-col min-h-0">
+      <div className="border-b border-zinc-800 bg-zinc-950/90 px-3 py-2 flex items-center gap-2 shrink-0">
+        <div className="flex-1" />
+        <button
+          onClick={onBackToTasks}
+          className="px-2 py-1 text-zinc-400 hover:text-zinc-200 text-xs border border-zinc-700 rounded hover:bg-zinc-800 shrink-0 flex items-center gap-1"
+        >
+          <ChevronRight className="h-3.5 w-3.5 rotate-180" />
+          <span className="hidden sm:inline">Tasks</span>
+        </button>
+      </div>
+      <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+        {sheetsUrl ? (
+          <iframe
+            src={sheetsUrl}
+            title="Google Sheets"
+            className="flex-1 w-full min-h-[360px] border-0 bg-zinc-900"
+            allowFullScreen
+          />
+        ) : assessmentMeta?.hasSheets ? (
+          <div className="flex-1 flex flex-col items-center justify-center gap-4 p-6">
+            <p className="text-zinc-400 text-sm">Get a copy of the assessment sheet to work on.</p>
+            <button
+              onClick={onProvisionSheets}
+              disabled={provisioning}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 rounded-lg font-medium hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
+            >
+              {provisioning ? 'Opening sheet...' : 'Open Google Sheet'}
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 export default function AssessmentPage({ 
@@ -66,10 +403,11 @@ export default function AssessmentPage({
   sessionCode,
   assessmentTemplate,
   assessmentMeta,
-  templateFiles
+  templateFiles,
+  onTestActivity
 }: AssessmentPageProps = {}) {
-  // Debug: Log props on mount
   useEffect(() => {
+    if (!DEBUG_ASSESSMENT) return;
     console.log('📋 AssessmentPage mounted with:', {
       hasSessionData: !!sessionData,
       hasTemplate: !!assessmentTemplate,
@@ -87,7 +425,8 @@ export default function AssessmentPage({
   
   // Editor reference for tracking
   const editorRef = useRef<any>(null);
-  const ideRef = useRef<StackBlitzIDEHandle>(null);
+  // StackBlitz PAUSED — ideRef type changed to any
+  const ideRef = useRef<any>(null);
   
   // Use session data if available, otherwise defaults
   const initialTimeLimit = sessionData?.time_limit 
@@ -127,11 +466,17 @@ export default function AssessmentPage({
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [showEndSessionModal, setShowEndSessionModal] = useState(false);
   const [isEndingSession, setIsEndingSession] = useState(false);
+  const [tabSwitchWarning, setTabSwitchWarning] = useState<{ remaining: number } | null>(null);
+  const [sessionTerminated, setSessionTerminated] = useState(false);
+  // const [showTimeUpModal, setShowTimeUpModal] = useState(false); // re-enable when testing done
   const [submissionResult, setSubmissionResult] = useState<any>(null);
   const [showSignupPrompt, setShowSignupPrompt] = useState(false);
   const { user } = useAuth();
   const router = useRouter();
   // Determine assessment type: 'code' (coding challenge) or 'ide' (IDE challenge)
+  // Check Azure container mode at component level
+  const useAzureContainer = useMemo(() => getUseAzureContainer(), []);
+
   const isIDEChallenge = useMemo(() => {
     return templateFiles && Object.keys(templateFiles).length > 0;
   }, [templateFiles]);
@@ -139,28 +484,57 @@ export default function AssessmentPage({
   const isCodeChallenge = useMemo(() => {
     return !isIDEChallenge;
   }, [isIDEChallenge]);
+
+  // Design/Figma tab: show when session has Figma URL or assessment has design enabled
+  const isDesignChallenge = useMemo(() => {
+    return !!(sessionData?.figmaFileUrl || sessionData?.assessmentMeta?.hasDesign);
+  }, [sessionData?.figmaFileUrl, sessionData?.assessmentMeta?.hasDesign]);
+  // Google Sheets tab: show when session has Sheets URL or assessment has sheets enabled
+  const isSheetsChallenge = useMemo(() => {
+    return !!(sessionData?.sheetsFileUrl || sessionData?.assessmentMeta?.hasSheets);
+  }, [sessionData?.sheetsFileUrl, sessionData?.assessmentMeta?.hasSheets]);
+
+  // Database tab: show when assessment has database component enabled
+  const isDatabaseChallenge = useMemo(() => {
+    const meta = sessionData?.assessmentMeta as any;
+    if (!meta) return false;
+    if (meta.hasDatabase) return true;
+    if (Array.isArray(meta.components) && meta.components.includes('database')) return true;
+    return false;
+  }, [sessionData?.assessmentMeta]);
+
+  // Docs tab: show when assessment has docs component enabled
+  const isDocsChallenge = useMemo(() => {
+    const meta = sessionData?.assessmentMeta as any;
+    if (!meta) return false;
+    if (meta.hasDocs) return true;
+    if (Array.isArray(meta.components) && meta.components.includes('docs')) return true;
+    return false;
+  }, [sessionData?.assessmentMeta]);
   
   // Use assessment template if available, otherwise fall back to default problems
   // IMPORTANT: Define problems BEFORE useEffect that uses it to avoid "Cannot access before initialization" error
   const problems = useMemo(() => {
-    console.log('🔄 Problems useMemo called', {
-      hasTemplate: !!assessmentTemplate,
-      templateType: typeof assessmentTemplate,
-      templateLength: Array.isArray(assessmentTemplate) ? assessmentTemplate.length : 'not array',
-      templateData: assessmentTemplate,
-      assessmentMeta
-    });
+    if (DEBUG_ASSESSMENT) {
+      console.log('🔄 Problems useMemo called', {
+        hasTemplate: !!assessmentTemplate,
+        templateType: typeof assessmentTemplate,
+        templateLength: Array.isArray(assessmentTemplate) ? assessmentTemplate.length : 'not array',
+        templateData: assessmentTemplate,
+        assessmentMeta
+      });
+    }
 
     // If assessment template is provided, convert it to problem format
     if (assessmentTemplate && Array.isArray(assessmentTemplate) && assessmentTemplate.length > 0) {
-      console.log('✅ Using assessment template, converting to problems...');
+      if (DEBUG_ASSESSMENT) console.log('✅ Using assessment template, converting to problems...');
       const converted = assessmentTemplate.map((template: any, index: number) => {
         // Convert assessment template to problem format
         // Support both old format (components) and new detailed format (tasks/requirements)
         const hasTasks = template.tasks && Array.isArray(template.tasks) && template.tasks.length > 0;
         const tasks = hasTasks ? template.tasks : [];
         
-        // Build description from tasks or components
+        // Build description from tasks, components, or explicit description field
         let description = '';
         if (hasTasks && tasks.length > 0) {
           // New detailed format with tasks
@@ -170,11 +544,14 @@ export default function AssessmentPage({
             ).join('\n  - ') || 'No specific requirements';
             return `Task ${i + 1}: ${task.title || `Task ${i + 1}`}\n  ${reqs}`;
           }).join('\n\n');
+        } else if (template.description) {
+          // Explicit description (e.g. from derived intentional issues)
+          description = template.description;
         } else if (template.components && Array.isArray(template.components)) {
           // Old format with components
           description = `Complete the following tasks:\n${template.components.map((c: string, i: number) => `${i + 1}. ${c}`).join('\n')}`;
         } else {
-          description = template.description || template.title || `Assessment Task ${index + 1}`;
+          description = template.title || `Assessment Task ${index + 1}`;
         }
         
         if (template.duration) {
@@ -215,21 +592,24 @@ export default function AssessmentPage({
                   typeof r === 'string' ? r : r.description || r.id || JSON.stringify(r)
                 );
               })
-            : template.components || ['Complete all tasks'],
+            : (template.requirements?.map((r: any) => typeof r === 'string' ? r : r.description || r.id || JSON.stringify(r)) ||
+               template.components ||
+               ['Complete all tasks']),
           starterCode,
           testCases,
           duration: template.duration,
           // Store original task data for reference
           originalTask: template
         };
-        console.log(`  → Converted template ${index + 1}:`, problem.title, `(${testCases.length} test cases)`);
+        if (DEBUG_ASSESSMENT) {
+          console.log(`  → Converted template ${index + 1}:`, problem.title, `(${testCases.length} test cases)`);
+        }
         return problem;
       });
-      console.log(`✅ Converted ${converted.length} templates to problems`);
+      if (DEBUG_ASSESSMENT) console.log(`✅ Converted ${converted.length} templates to problems`);
       return converted;
     }
-    // Fall back to default problems if no template
-    console.log('⚠️ No assessment template, using default problems');
+    if (DEBUG_ASSESSMENT) console.log('⚠️ No assessment template, using default problems');
     return allProblems;
   }, [assessmentTemplate, assessmentMeta]);
   
@@ -237,6 +617,7 @@ export default function AssessmentPage({
   const [activeTab, setActiveTab] = useState<TabType>('task');
   
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(false); // For code view, chat history panel
+  const [isAIPanelOpen, setIsAIPanelOpen] = useState(false); // Unified AI assistant sidebar
   const [showTestResults, setShowTestResults] = useState(false); // Test results visibility
   const [testResults, setTestResults] = useState<any[]>([]); // Store actual test results
   const [isRunning, setIsRunning] = useState(false); // Loading state for run button
@@ -244,9 +625,48 @@ export default function AssessmentPage({
   const [permissionsGranted, setPermissionsGranted] = useState(false); // Track if permissions are granted
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null); // Screen sharing stream
   const [requestingPermissions, setRequestingPermissions] = useState(false); // Prevent multiple prompts
-  const [selectedLLM, setSelectedLLM] = useState<string | null>(null);
-  const [showLLMSelector, setShowLLMSelector] = useState(true); // Always show popup
+  // Model selection is handled inside AIAssistantPanel — no blocking modal needed.
+  // Default to gemini-2.0-flash so the old sendMessage path also has a value.
+  const [selectedLLM, setSelectedLLM] = useState<string>('gemini-2.0-flash');
+  const [showLLMSelector, setShowLLMSelector] = useState(false); // Modal disabled — model picker lives in the panel
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false); // Sidebar collapse state
+  const [figmaUrlOverride, setFigmaUrlOverride] = useState<string | null>(null); // Set after provision-figma
+  const [designProvisioning, setDesignProvisioning] = useState(false);
+  const [sheetsUrlOverride, setSheetsUrlOverride] = useState<string | null>(null); // Set after provision-sheets
+  const [sheetsProvisioning, setSheetsProvisioning] = useState(false);
+  const [mcpInsights, setMcpInsights] = useState<Array<{ id: string; source: string; payload: any; createdAt: string }>>([]);
+
+  // Container-level tracking: whole assessment (tabs, problems, run, submit, end) for Server C
+  const handleAssessmentTabChange = (tab: TabType) => {
+    setActiveTab(tab);
+    setIsRightPanelOpen(false);
+    onTestActivity?.onTabChange?.(tab);
+    if (sessionData?.id) {
+      trackEvent({
+        sessionId: sessionData.id,
+        eventType: 'assessment_tab_switched',
+        metadata: { tab, isIDEChallenge, isCodeChallenge }
+      });
+    }
+  };
+  const handleAssessmentProblemChange = (idx: number) => {
+    setCurrentProblem(idx);
+    const problem = problems[idx];
+    if (sessionData?.id && problem) {
+      trackEvent({
+        sessionId: sessionData.id,
+        eventType: 'assessment_problem_focused',
+        metadata: { problemIndex: idx, problemId: (problem as any).id, problemTitle: problem.title }
+      });
+    }
+  };
+
+  // IDE status - gate on IDE readiness so we don't show failed IDE during assessment
+  const [ideStatus, setIdeStatus] = useState<{ isReady: boolean; isLoading: boolean; error: string | null }>({
+    isReady: false,
+    isLoading: false,
+    error: null,
+  });
   
   // Initialize and update code when problems are loaded or problem changes
   useEffect(() => {
@@ -441,11 +861,9 @@ export default function AssessmentPage({
 
   const handleAutoSubmit = () => {
     if (!isSubmitting) {
-      alert('Time is up! Auto-submitting your code...');
-      setIsSubmitting(true);
       stopRecording();
-      // TODO: Submit to backend
-      console.log('Submitting code:', code);
+      // Delegate to confirmSubmit — same backend path as a manual submission
+      confirmSubmit();
     }
   };
 
@@ -527,13 +945,14 @@ export default function AssessmentPage({
           // Recruiter assessment: Actually record and upload
           console.log('🎥 Starting recording for recruiter assessment...', {
             sessionId: sessionData.id,
-            assessmentType: assessmentType
+            assessmentType: assessmentType,
+            useAzureContainer
           });
           await startRecordingWithStreams(screenStream, webcamStream, true); // Pass isRecruiter explicitly
-          
+
           // ✅ Start monitoring for violations
           monitorScreenShareValidity(screenStream);
-          
+
           console.log('✅ Recording started for recruiter assessment');
           setIsRecording(true);
         } else {
@@ -552,7 +971,12 @@ export default function AssessmentPage({
         
       } catch (error) {
         console.error('❌ Failed to get permissions:', error);
-        if (isRecruiter) {
+        if (useAzureContainer) {
+          if (DEBUG_ASSESSMENT) {
+            console.log('ℹ️ Azure Container mode - continuing without recording after permission error');
+          }
+          setPermissionsGranted(true);
+        } else if (isRecruiter) {
           // For recruiter assessments, recording is required
           alert('Failed to start recording. Please allow screen sharing and webcam access to continue.');
           permissionsRequestedRef.current = false; // Reset on error so user can retry
@@ -569,44 +993,20 @@ export default function AssessmentPage({
     
     // Request permissions for both types, but only record for recruiter assessments
     // Candidate assessments: Prompt for permissions but don't record
-    // Recruiter assessments: Prompt for permissions AND record
+    // Recruiter assessments: Prompt for permissions AND record (including Azure container sessions)
     requestPermissions();
-  }, [sessionData, isRecruiterAssessment]); // Wait for sessionData to be loaded
+  }, [sessionData, isRecruiterAssessment, useAzureContainer]); // Wait for sessionData to be loaded
 
-  // Auto-end session when user leaves/closes tab
-  useEffect(() => {
-    const endSessionOnLeave = () => {
-      if (sessionData?.id && !isSubmitting && !isEndingSession) {
-        // Use sendBeacon for reliable unload requests
-        const data = JSON.stringify({});
-        if (navigator.sendBeacon) {
-          navigator.sendBeacon(
-            `${API_BASE_URL}/api/sessions/${sessionData.id}/end`,
-            new Blob([data], { type: 'application/json' })
-          );
-        } else {
-          // Fallback for older browsers
-          fetch(`${API_BASE_URL}/api/sessions/${sessionData.id}/end`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            keepalive: true,
-            body: data
-          }).catch(err => console.error('Failed to end session:', err));
-        }
-      }
-    };
-
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      endSessionOnLeave();
-      return undefined;
-    };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
-  }, [sessionData?.id, isSubmitting, isEndingSession]);
+  // AUTO-END ON LEAVE DISABLED for E2E testing — re-enable before production
+  // useEffect(() => {
+  //   if (!sessionData?.id || sessionData?.status !== 'active') return;
+  //   const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+  //     e.preventDefault();
+  //     e.returnValue = '';
+  //   };
+  //   window.addEventListener('beforeunload', handleBeforeUnload);
+  //   return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  // }, [sessionData?.id, sessionData?.status]);
 
   // Activity tracking - send pings to backend every 30 seconds
   useEffect(() => {
@@ -647,6 +1047,42 @@ export default function AssessmentPage({
     return () => clearInterval(activityInterval);
   }, [sessionData?.id, sessionData?.status]);
 
+  // Periodic code snapshot every 5 minutes — builds a timeline for the recruiter report
+  useEffect(() => {
+    if (!sessionData?.id || sessionData?.status !== 'active') return;
+
+    const takeSnapshot = async () => {
+      try {
+        let filesJson: string | null = null;
+
+        // Try IDE ref first (Azure container / file-based IDE)
+        if (ideRef.current?.getFiles) {
+          const files = await ideRef.current.getFiles().catch(() => null);
+          if (files) filesJson = JSON.stringify(files);
+        }
+
+        // Fallback: use the single-code state for Monaco-style editors
+        if (!filesJson && typeof (window as any).__currentCode === 'string') {
+          filesJson = JSON.stringify({ 'solution': (window as any).__currentCode });
+        }
+
+        if (!filesJson) return;
+
+        await fetch(`${API_BASE_URL}/api/sessions/${sessionData.id}/submit-files`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ finalCode: filesJson }),
+        });
+      } catch {
+        // Non-critical — silently skip if anything fails
+      }
+    };
+
+    // First snapshot after 5 minutes, then every 5 minutes
+    const snapshotInterval = setInterval(takeSnapshot, 5 * 60 * 1000);
+    return () => clearInterval(snapshotInterval);
+  }, [sessionData?.id, sessionData?.status]);
+
   // Tab switch detection using Page Visibility API
   useEffect(() => {
     if (!sessionData?.id || sessionData?.status !== 'active') {
@@ -668,6 +1104,13 @@ export default function AssessmentPage({
               const timeoutId = setTimeout(() => controller.abort(), 5000);
               
               try {
+                if (sessionData?.id) {
+                  trackEvent({
+                    sessionId: sessionData.id,
+                    eventType: 'browser_tab_left',
+                    metadata: { reason: 'visibility_hidden' }
+                  });
+                }
                 const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionData.id}/tab-switch`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
@@ -679,21 +1122,21 @@ export default function AssessmentPage({
                 if (!response.ok) {
                   const errorData = await response.json();
                   if (errorData.sessionEnded) {
-                    // Session was ended due to excessive tab switching
-                    alert('Session ended due to excessive tab switching. Please contact the recruiter.');
-                    window.location.reload();
+                    setSessionTerminated(true);
                   }
                 } else {
                   const data = await response.json();
-                  if (data.remaining !== undefined && data.remaining <= 2) {
-                    // Warning: Only a few tab switches remaining
-                    console.warn(`⚠️ Warning: Only ${data.remaining} tab switch${data.remaining === 1 ? '' : 'es'} remaining`);
+                  if (data.remaining !== undefined && data.remaining >= 0 && data.remaining <= 2) {
+                    setTabSwitchWarning({ remaining: data.remaining });
+                    // Auto-dismiss warning after 6 seconds
+                    setTimeout(() => setTabSwitchWarning(null), 6000);
                   }
                 }
               } catch (fetchError: any) {
                 clearTimeout(timeoutId);
-                // Only log if it's not a connection error
-                if (!fetchError.message?.includes('Failed to fetch') && !fetchError.message?.includes('ERR_CONNECTION_REFUSED')) {
+                // Silently swallow aborts and connection errors — tab switch tracking is best-effort
+                const msg = fetchError.message ?? '';
+                if (fetchError.name !== 'AbortError' && !msg.includes('Failed to fetch') && !msg.includes('ERR_CONNECTION_REFUSED')) {
                   console.warn('Failed to track tab switch:', fetchError);
                 }
               }
@@ -805,19 +1248,15 @@ export default function AssessmentPage({
       const elapsed = Date.now() - startTime.getTime();
       const remaining = Math.max(0, initialTimeLimit - elapsed);
       setTimeRemaining(remaining);
-      
-      if (remaining === 0) {
-        if (!isSubmitting) {
-          alert('Time is up! Auto-submitting your code...');
-          setIsSubmitting(true);
-          stopRecording();
-          console.log('Submitting code:', code);
-        }
+
+      if (remaining === 0 && !isSubmitting) {
+        clearInterval(interval);
+        confirmEndSession();
       }
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [startTime, isSubmitting, code, initialTimeLimit]);
+  }, [startTime, isSubmitting, initialTimeLimit]);
 
   // Start recording with both screen and webcam streams
   // ONLY called for recruiter assessments
@@ -841,8 +1280,9 @@ export default function AssessmentPage({
         hasWebcamStream: !!webcamStream
       });
 
-      // Connect to WebSocket for live streaming (only for recruiter assessments)
-      if (sessionData.id && isRecruiter) {
+      // Azure container sessions skip WebSocket and use HTTP upload only (handled in uploadChunk)
+      // Connect to WebSocket for live streaming (only for non-Azure recruiter assessments)
+      if (sessionData.id && isRecruiter && !useAzureContainer) {
         try {
           const ws = new WebSocket(WS_VIDEO_URL);
           wsRef.current = ws;
@@ -1106,7 +1546,12 @@ export default function AssessmentPage({
               
               console.log(`✅ ${streamType} chunk ${chunkIndex}: Valid base64 (${base64Data.length} chars)`);
               
-              // Send via WebSocket (only for recruiter assessments)
+              // WebSocket path: skip for Azure container sessions (connection unreliable)
+              // HTTP upload below handles Azure containers instead
+              if (useAzureContainer) {
+                console.log(`ℹ️ Azure Container mode - using HTTP upload instead of WebSocket for ${streamType} chunk ${chunkIndex}`);
+              } else {
+              // Send via WebSocket (only for non-Azure recruiter assessments)
               if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                 wsRef.current.send(JSON.stringify({
                   type: 'video-chunk',
@@ -1119,18 +1564,22 @@ export default function AssessmentPage({
               } else {
                 console.warn(`WebSocket not ready for ${streamType} chunk ${chunkIndex}`);
               }
+              } // end non-Azure WebSocket block
             } catch (error) {
               console.error(`Error processing ${streamType} chunk ${chunkIndex}:`, error);
             }
           };
-          
+
           reader.readAsDataURL(blob);
 
-          // Upload to storage (only for recruiter assessments)
+          // Upload to storage (recruiter assessments — both Azure and non-Azure)
           const formData = new FormData();
           formData.append('video', blob, `${streamType}_chunk_${chunkIndex}.webm`);
           formData.append('sessionId', sessionId);
           formData.append('chunkIndex', chunkIndex.toString());
+          // Pass the actual recorded mimeType so playback uses the correct codec
+          const actualMimeType = streamType === 'screenshare' ? screenMimeType : webcamMimeType;
+          formData.append('mimeType', actualMimeType || 'video/webm');
           
           // ✅ CRITICAL: Explicitly set streamType - must be 'webcam' or 'screenshare'
           if (streamType !== 'webcam' && streamType !== 'screenshare') {
@@ -1443,25 +1892,22 @@ export default function AssessmentPage({
     setIsRecording(false);
   };
 
-  const handleSendMessage = async () => {
+  const handleSendMessage = async (externalMessage?: string) => {
     // Prevent duplicate sends
     if (isAiLoading) {
       console.warn('AI request already in progress, ignoring duplicate send');
       return;
     }
 
-    if (!inputMessage.trim() || !selectedLLM) {
-      console.warn('Cannot send message: inputMessage=', inputMessage.trim(), 'selectedLLM=', selectedLLM);
-      if (!selectedLLM) {
-        alert('Please select an AI assistant first by clicking on the Chat tab.');
-        setShowLLMSelector(true);
-        setActiveTab('chat');
-      }
+    // Support messages from iframe chatbot (externalMessage) OR parent input box
+    const rawText = externalMessage ?? inputMessage;
+    if (!rawText.trim()) {
+      console.warn('Cannot send message: message is empty');
       return;
     }
 
-    const messageText = inputMessage.trim();
-    setInputMessage(''); // Clear input immediately
+    const messageText = rawText.trim();
+    if (!externalMessage) setInputMessage(''); // Only clear parent input if it was used
     setIsAiLoading(true); // Set loading state immediately
 
     // Increment request ID to track this specific request
@@ -1487,17 +1933,52 @@ export default function AssessmentPage({
         problemId
       }
     });
+    onTestActivity?.onChatMessage?.();
 
-    // Get problem context - handle IDE challenges (no current problem)
-    let problemContext: string | undefined = undefined;
-    if (currentProblem !== null && problems.length > 0 && problems[currentProblem]) {
-      problemContext = `${problems[currentProblem].title}: ${problems[currentProblem].description}`;
-    } else if (assessmentTemplate && Array.isArray(assessmentTemplate) && assessmentTemplate.length > 0) {
-      // For IDE challenges, use the first task as context
-      const firstTask = assessmentTemplate[0];
-      problemContext = firstTask.title 
-        ? `${firstTask.title}: ${firstTask.description || firstTask.components?.join(', ') || 'IDE Challenge'}`
-        : 'IDE Challenge';
+    // Build full workflow context: IDE files, problems, output, active tab
+    let fullContext: FullWorkflowContext | undefined;
+    try {
+      let ideFiles: Array<{ path: string; content: string }> = [];
+      let fileTree: string[] = [];
+      if (ideRef.current && isIDEChallenge) {
+        const allFiles = await ideRef.current.getAllFiles();
+        fileTree = Object.keys(allFiles).filter(p => !p.includes('node_modules') && !p.includes('.git')).sort();
+        ideFiles = selectFilesForContext(allFiles, 8, 2000);
+      } else if (isCodeChallenge && code?.trim()) {
+        // Code challenge: single file from Monaco editor
+        const ext = language === 'javascript' ? 'js' : language === 'python' ? 'py' : language === 'java' ? 'java' : 'ts';
+        fileTree = [`solution.${ext}`];
+        ideFiles = [{ path: `solution.${ext}`, content: code.slice(0, 2000) }];
+      }
+      fullContext = {
+        activeTab,
+        assessment: {
+          problems: problems.map((p: any) => ({
+            id: p.id || '',
+            title: p.title || '',
+            description: p.description || '',
+            constraints: p.constraints,
+            examples: p.examples ? JSON.stringify(p.examples) : undefined
+          })),
+          instructions: (assessmentMeta as any)?.instructions,
+          metadata: {
+            jobTitle: assessmentMeta?.jobTitle || sessionData?.assessment?.jobTitle || 'Assessment',
+            role: assessmentMeta?.role || sessionData?.assessment?.role || 'candidate',
+            timeRemaining
+          }
+        },
+        ide: ideFiles.length > 0 ? { fileTree, files: ideFiles } : undefined,
+        output: testResults.length > 0
+          ? {
+              testResults: testResults
+                .map(r => `${r.passed ? '✓' : '✗'} ${r.name}: ${r.error || (r.expected !== undefined ? `expected ${JSON.stringify(r.expected)}` : 'passed')}`)
+                .join('\n')
+            }
+          : undefined
+      };
+    } catch (e) {
+      console.warn('Failed to build full workflow context:', e);
+      fullContext = { activeTab, assessment: { problems: [], metadata: { jobTitle: 'Assessment', role: 'candidate' } } };
     }
 
     // Capture current messages before updating state
@@ -1535,18 +2016,60 @@ export default function AssessmentPage({
             throw new Error('No LLM selected');
           }
 
-          // Get LLM service using factory
-          const llmService = getLLMService(selectedLLM as any);
-          
-          console.log('📤 Sending message to LLM:', {
+          console.log('📤 Sending message to LLM via backend proxy:', {
             model: selectedLLM,
             messageCount: apiMessages.length,
-        hasContext: !!problemContext,
-        requestId: currentRequestId
+            requestId: currentRequestId
           });
 
-          const response = await llmService.chat(apiMessages, problemContext);
-      
+          // Use backend proxy — all LLM keys live server-side
+          const res = await fetch('/api/ai/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              messages: apiMessages,
+              sessionId: sessionData?.id,
+              currentProblem: problems[currentProblem]
+                ? { title: (problems[currentProblem] as any).title, description: (problems[currentProblem] as any).description }
+                : undefined,
+              currentProblemIndex: currentProblem,
+              allProblems: problems.map((p: any) => ({ title: p.title, description: p.description, difficulty: p.difficulty, requirements: p.requirements })),
+              role: 'candidate',
+              surface: 'ide',
+              model: selectedLLM,
+            }),
+          });
+
+          if (!res.ok || !res.body) {
+            const errText = await res.text().catch(() => `HTTP ${res.status}`);
+            let errMsg = `Error ${res.status}`;
+            try { errMsg = JSON.parse(errText).error ?? errText; } catch { errMsg = errText || errMsg; }
+            throw new Error(errMsg);
+          }
+
+          // Stream the response and update the "Thinking..." bubble progressively
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let response = '';
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            response += decoder.decode(value, { stream: true });
+
+            // Update the last assistant message incrementally
+            if (currentRequestId === aiRequestRef.current) {
+              setMessages(currentMessages => {
+                const newMsgs = [...currentMessages];
+                const idx = newMsgs.map(m => m.role).lastIndexOf('assistant');
+                if (idx !== -1) {
+                  newMsgs[idx] = { ...newMsgs[idx], content: response || 'Thinking...' };
+                }
+                return newMsgs;
+              });
+            }
+          }
+
       // Check if this request is still the latest one (prevent race conditions)
       if (currentRequestId !== aiRequestRef.current) {
         console.warn('⚠️ Received response for outdated request, ignoring');
@@ -1602,7 +2125,7 @@ export default function AssessmentPage({
             message: error.message,
             stack: error.stack,
             selectedLLM,
-            problemContext
+            hasContext: !!fullContext
           });
           
           // Replace loading message with error
@@ -1644,7 +2167,19 @@ export default function AssessmentPage({
   const handleRunCode = async () => {
     setIsRunning(true);
     setShowTestResults(true);
-    
+    if (sessionData?.id) {
+      const problem = problems[currentProblem];
+      trackEvent({
+        sessionId: sessionData.id,
+        eventType: 'assessment_run_code',
+        metadata: {
+          problemIndex: currentProblem,
+          problemId: problem ? (problem as any).id : null,
+          problemTitle: problem?.title,
+          isIDEChallenge
+        }
+      });
+    }
     try {
       // If JS and test cases exist, run harness
       const problem = problems[currentProblem];
@@ -1737,7 +2272,18 @@ export default function AssessmentPage({
   const confirmSubmit = async () => {
     setIsSubmitting(true);
     setShowSubmitModal(false);
-    
+    if (sessionData?.id) {
+      trackEvent({
+        sessionId: sessionData.id,
+        eventType: 'assessment_submission',
+        metadata: {
+          isIDEChallenge,
+          isCodeChallenge,
+          problemIndex: isCodeChallenge ? currentProblem : null,
+          problemId: isCodeChallenge && problems[currentProblem] ? (problems[currentProblem] as any).id : null
+        }
+      });
+    }
     try {
       if (isIDEChallenge) {
         // ── IDE challenge: collect all files from WebContainer and save ──
@@ -1808,7 +2354,13 @@ export default function AssessmentPage({
   const confirmEndSession = async () => {
     setIsEndingSession(true);
     setShowEndSessionModal(false);
-    
+    if (sessionData?.id) {
+      trackEvent({
+        sessionId: sessionData.id,
+        eventType: 'assessment_session_ended',
+        metadata: { isIDEChallenge, isCodeChallenge }
+      });
+    }
     try {
       if (!sessionData?.id) {
         alert('No session ID found');
@@ -1894,8 +2446,48 @@ export default function AssessmentPage({
 
   const isTimeLow = timeRemaining < 300000; // Less than 5 minutes
 
+  // ── Session terminated by tab-switch enforcement ──────────────────────────
+  if (sessionTerminated) {
+    return (
+      <div className="h-screen w-full bg-black flex items-center justify-center">
+        <div className="max-w-md w-full mx-4 text-center">
+          <div className="w-16 h-16 rounded-full bg-red-500/10 border border-red-500/30 flex items-center justify-center mx-auto mb-6">
+            <svg className="h-8 w-8 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+            </svg>
+          </div>
+          <h1 className="text-2xl font-bold text-white mb-3">Assessment Ended</h1>
+          <p className="text-zinc-400 mb-2">
+            Your session was terminated because you switched away from this tab too many times.
+          </p>
+          <p className="text-zinc-500 text-sm">
+            Your progress has been saved. Please contact the recruiter if you believe this was an error.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-screen w-full bg-gradient-to-b from-[#0B0B0F] to-[#07070A] text-zinc-100 font-sans overflow-hidden relative">
+      {/* Tab switch warning toast */}
+      {tabSwitchWarning !== null && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[9999] animate-in slide-in-from-top-2 duration-300">
+          <div className="flex items-center gap-3 bg-yellow-500/10 border border-yellow-500/40 text-yellow-300 px-5 py-3 rounded-xl shadow-2xl backdrop-blur-sm">
+            <svg className="h-5 w-5 text-yellow-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+            </svg>
+            <div>
+              <p className="font-semibold text-sm">Tab switch detected</p>
+              <p className="text-xs text-yellow-400/80">
+                {tabSwitchWarning.remaining === 0
+                  ? 'Next tab switch will end your session.'
+                  : `${tabSwitchWarning.remaining} warning${tabSwitchWarning.remaining === 1 ? '' : 's'} remaining before session ends.`}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Corner Squares */}
       <div className="absolute top-0 left-0 w-3 h-3 border-t-2 border-l-2 border-zinc-600 z-50"></div>
       <div className="absolute top-0 right-0 w-3 h-3 border-t-2 border-r-2 border-zinc-600 z-50"></div>
@@ -1934,6 +2526,20 @@ export default function AssessmentPage({
                 {formatTime(timeRemaining)}
               </span>
             </div>
+            {/* AI Assistant toggle */}
+            <button
+              onClick={() => setIsAIPanelOpen(prev => !prev)}
+              className={`px-2 sm:px-3 py-1.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition-colors ${
+                isAIPanelOpen
+                  ? 'border-blue-500/50 bg-blue-500/20 text-blue-300'
+                  : 'border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-blue-500/40 hover:text-blue-300'
+              }`}
+              title="Toggle AI Assistant"
+            >
+              <Sparkles className="h-3.5 w-3.5 shrink-0" />
+              <span className="hidden sm:inline">AI</span>
+            </button>
+
             <button
               onClick={handleEndSession}
               disabled={isEndingSession || isSubmitting}
@@ -1969,7 +2575,7 @@ export default function AssessmentPage({
             <div className="flex-1 overflow-y-auto py-2">
               <nav className="space-y-1 px-2">
                 <button
-                  onClick={() => { setActiveTab('task'); setIsRightPanelOpen(false); }}
+                  onClick={() => handleAssessmentTabChange('task')}
                   className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all ${
                     activeTab === 'task' 
                       ? 'bg-zinc-800 text-white' 
@@ -1983,25 +2589,10 @@ export default function AssessmentPage({
                   )}
                 </button>
                 
-                <button
-                  onClick={() => { setActiveTab('chat'); setIsRightPanelOpen(false); }}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all ${
-                    activeTab === 'chat' 
-                      ? 'bg-zinc-800 text-white' 
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/50'
-                  }`}
-                  title="Chat"
-                >
-                  <MessageSquare className={`h-5 w-5 shrink-0 ${activeTab === 'chat' ? 'text-white' : 'text-zinc-400'}`} />
-                  {!isSidebarCollapsed && (
-                    <span className="text-sm font-medium flex-1 text-left">Chat</span>
-                  )}
-                </button>
-                
                 {/* Code Editor Tab - Only show for code challenges */}
                 {isCodeChallenge && (
                   <button
-                    onClick={() => { setActiveTab('code'); setIsRightPanelOpen(false); }}
+                    onClick={() => handleAssessmentTabChange('code')}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all ${
                       activeTab === 'code' 
                         ? 'bg-zinc-800 text-white' 
@@ -2019,17 +2610,98 @@ export default function AssessmentPage({
                 {/* IDE Tab - Only show for IDE challenges */}
                 {isIDEChallenge && (
                   <button
-                    onClick={() => { setActiveTab('ide'); setIsRightPanelOpen(false); }}
+                    onClick={() => { if (!ideStatus.error) handleAssessmentTabChange('ide'); }}
+                    disabled={!!ideStatus.error}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all ${
-                      activeTab === 'ide' 
-                        ? 'bg-zinc-800 text-white' 
+                      ideStatus.error
+                        ? 'opacity-50 cursor-not-allowed text-red-400'
+                        : activeTab === 'ide' 
+                          ? 'bg-zinc-800 text-white' 
+                          : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/50'
+                    }`}
+                    title={ideStatus.error ? 'IDE unavailable' : ideStatus.isLoading ? 'Preparing IDE...' : 'IDE'}
+                  >
+                    <Terminal className={`h-5 w-5 shrink-0 ${activeTab === 'ide' && !ideStatus.error ? 'text-white' : 'text-zinc-400'}`} />
+                    {!isSidebarCollapsed && (
+                      <span className="text-sm font-medium flex-1 text-left">
+                        IDE
+                        {ideStatus.isLoading && <span className="text-[10px] text-zinc-500 ml-1">(loading)</span>}
+                        {ideStatus.error && <span className="text-[10px] text-red-400 ml-1">(unavailable)</span>}
+                      </span>
+                    )}
+                  </button>
+                )}
+                {/* Design (Figma) Tab - show when assessment has design enabled or session has Figma */}
+                {isDesignChallenge && (
+                  <button
+                    onClick={() => handleAssessmentTabChange('design')}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all ${
+                      activeTab === 'design'
+                        ? 'bg-zinc-800 text-white'
                         : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/50'
                     }`}
-                    title="IDE"
+                    title="Design"
                   >
-                    <Terminal className={`h-5 w-5 shrink-0 ${activeTab === 'ide' ? 'text-white' : 'text-zinc-400'}`} />
+                    <img src={FIGMA_LOGO} alt="" className="h-5 w-5 shrink-0" width={20} height={20} />
                     {!isSidebarCollapsed && (
-                      <span className="text-sm font-medium flex-1 text-left">IDE</span>
+                      <span className="text-sm font-medium flex-1 text-left">Design</span>
+                    )}
+                  </button>
+                )}
+                {isSheetsChallenge && (
+                  <button
+                    onClick={() => handleAssessmentTabChange('sheets')}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all ${
+                      activeTab === 'sheets'
+                        ? 'bg-zinc-800 text-white'
+                        : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/50'
+                    }`}
+                    title="Sheets"
+                  >
+                    <img src={SHEETS_LOGO} alt="" className="h-5 w-5 shrink-0" width={20} height={20} />
+                    {!isSidebarCollapsed && (
+                      <span className="text-sm font-medium flex-1 text-left">Sheets</span>
+                    )}
+                  </button>
+                )}
+                {isDatabaseChallenge && (
+                  <button
+                    onClick={() => handleAssessmentTabChange('database')}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all ${
+                      activeTab === 'database'
+                        ? 'bg-zinc-800 text-white'
+                        : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/50'
+                    }`}
+                    title="Database Explorer"
+                  >
+                    <svg className="h-5 w-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <ellipse cx="12" cy="5" rx="9" ry="3"/>
+                      <path d="M3 5v4c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/>
+                      <path d="M3 9v4c0 1.66 4.03 3 9 3s9-1.34 9-3V9"/>
+                      <path d="M3 13v4c0 1.66 4.03 3 9 3s9-1.34 9-3v-4"/>
+                    </svg>
+                    {!isSidebarCollapsed && (
+                      <span className="text-sm font-medium flex-1 text-left">Database</span>
+                    )}
+                  </button>
+                )}
+                {isDocsChallenge && (
+                  <button
+                    onClick={() => handleAssessmentTabChange('docs')}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all ${
+                      activeTab === 'docs'
+                        ? 'bg-zinc-800 text-white'
+                        : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/50'
+                    }`}
+                    title="Documentation Task"
+                  >
+                    <img
+                      src="https://www.gstatic.com/images/branding/product/1x/docs_2020q4_48dp.png"
+                      alt="Google Docs"
+                      className="h-5 w-5 object-contain shrink-0"
+                    />
+                    {!isSidebarCollapsed && (
+                      <span className="text-sm font-medium flex-1 text-left">Docs</span>
                     )}
                   </button>
                 )}
@@ -2038,6 +2710,25 @@ export default function AssessmentPage({
           </div>
 
         {/* Main Content Area */}
+          {isIDEChallenge && ideStatus.error && (
+            <div className="mx-4 mt-2 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm flex flex-col sm:flex-row sm:items-center gap-2">
+              <div className="flex items-start gap-2 flex-1">
+                <AlertCircle className="h-5 w-5 shrink-0 mt-0.5" />
+                <span>IDE is unavailable. {ideStatus.error} Tasks can still be viewed.</span>
+              </div>
+              {ideStatus.error?.toLowerCase().includes('cross-origin') && typeof window !== 'undefined' && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => window.open(window.location.href, '_blank', 'noopener,noreferrer')}
+                  className="shrink-0 border-red-500/50 text-red-400 hover:bg-red-500/20"
+                >
+                  <ExternalLink className="h-4 w-4 mr-1.5" />
+                  Open in new tab
+                </Button>
+              )}
+            </div>
+          )}
           
           {/* TASK VIEW */}
           {activeTab === 'task' && (
@@ -2109,9 +2800,9 @@ export default function AssessmentPage({
                             <div className="flex gap-2">
                               <button
                                 onClick={() => {
-                                  setCurrentProblem(idx);
                                   setCode(problem.starterCode);
-                                  setActiveTab('code');
+                                  handleAssessmentProblemChange(idx);
+                                  handleAssessmentTabChange('code');
                                 }}
                                 className="flex-1 px-3 py-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 rounded-lg text-xs sm:text-sm font-medium hover:bg-emerald-500/20 transition-colors flex items-center justify-center gap-1.5"
                               >
@@ -2120,13 +2811,13 @@ export default function AssessmentPage({
                               </button>
                               <button
                                 onClick={() => {
-                                  setCurrentProblem(idx);
-                                  setActiveTab('chat');
+                                  handleAssessmentProblemChange(idx);
+                                  setIsAIPanelOpen(true);
                                 }}
                                 className="flex-1 px-3 py-2 bg-zinc-800 border border-zinc-700 text-zinc-200 rounded-lg text-xs sm:text-sm font-medium hover:bg-zinc-700 transition-colors flex items-center justify-center gap-1.5"
                               >
-                                <MessageSquare className="h-3.5 w-3.5" />
-                                <span>Help</span>
+                                <Sparkles className="h-3.5 w-3.5" />
+                                <span>Ask AI</span>
                               </button>
                             </div>
                           )}
@@ -2134,9 +2825,7 @@ export default function AssessmentPage({
                           {/* IDE Challenge: Show IDE button only */}
                           {isIDEChallenge && (
                             <button
-                              onClick={() => {
-                                setActiveTab('ide');
-                              }}
+                              onClick={() => handleAssessmentTabChange('ide')}
                               className="w-full px-3 py-2 bg-blue-500/10 border border-blue-500/30 text-blue-300 rounded-lg text-xs sm:text-sm font-medium hover:bg-blue-500/20 transition-colors flex items-center justify-center gap-1.5"
                             >
                               <Terminal className="h-3.5 w-3.5" />
@@ -2152,164 +2841,113 @@ export default function AssessmentPage({
             </div>
           )}
 
-          {/* CHAT VIEW */}
-          {activeTab === 'chat' && (
-            <div className="flex-1 border border-zinc-800 bg-zinc-950/70 backdrop-blur-xl rounded-xl overflow-hidden flex flex-col">
-              {/* Header */}
-              <div className="border-b border-zinc-800 bg-zinc-950/90 px-4 sm:px-6 py-3 flex items-center justify-between shrink-0">
-                <div className="flex items-center gap-2 sm:gap-3">
-                  <MessageSquare className="h-5 w-5 text-emerald-400" />
-                  <h2 className="text-lg sm:text-xl font-bold text-white">AI Assistant</h2>
-                  {selectedLLM && (
-                    <span className="px-2 sm:px-3 py-1 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-xs sm:text-sm font-medium text-emerald-300">
-                      {selectedLLM === 'openai' && '🤖 GPT-4'}
-                      {selectedLLM === 'claude' && '🧠 Claude 3.5'}
-                      {selectedLLM === 'gemini' && '💎 Gemini Pro'}
-                      {selectedLLM === 'anthropic' && '🔮 Anthropic Claude'}
-                    </span>
-                  )}
-                </div>
-                <button
-                  onClick={() => setActiveTab('task')}
-                  className="px-2 sm:px-3 py-1.5 text-zinc-400 hover:text-zinc-200 text-xs sm:text-sm border border-zinc-700 rounded-lg hover:bg-zinc-800 transition-colors flex items-center gap-1.5"
-                >
-                  <ChevronRight className="h-3.5 w-3.5 rotate-180" />
-                  <span className="hidden sm:inline">Tasks</span>
-                </button>
-              </div>
+          {/* DESIGN (Figma) VIEW */}
+          {activeTab === 'design' && isDesignChallenge && (
+            <DesignTabView
+              sessionId={sessionData?.id}
+              figmaUrl={figmaUrlOverride ?? sessionData?.figmaFileUrl ?? null}
+              assessmentMeta={sessionData?.assessmentMeta}
+              onProvisionFigma={async () => {
+                if (!sessionData?.id) return;
+                setDesignProvisioning(true);
+                try {
+                  const res = await fetch(`${API_BASE_URL}/api/sessions/${sessionData.id}/provision-figma`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      figmaFileKey: sessionData?.assessmentMeta?.figmaFileKey ?? sessionData?.assessmentMeta?.figmaTemplateId ?? undefined,
+                      figmaAccessToken: undefined
+                    })
+                  });
+                  const json = await res.json();
+                  if (json.success && json.url) {
+                    setFigmaUrlOverride(json.url);
+                  } else {
+                    const msg = json.error || 'Provision failed';
+                    if (json.code === 'MISSING_FILE_KEY') {
+                      throw new Error('Backend needs a Figma file key. Add FIGMA_TEMPLATE_FILE_ID to backend .env (the key from your Figma file URL) and restart the backend.');
+                    }
+                    if (json.code === 'MISSING_TOKEN') {
+                      throw new Error('Backend needs FIGMA_ACCESS_TOKEN in .env. Add it and restart the backend.');
+                    }
+                    throw new Error(msg);
+                  }
+                } finally {
+                  setDesignProvisioning(false);
+                }
+              }}
+              provisioning={designProvisioning}
+              mcpInsights={mcpInsights}
+              onRefreshInsights={async () => {
+                if (!sessionData?.id) return;
+                const res = await fetch(`${API_BASE_URL}/api/sessions/${sessionData.id}/mcp-insights?source=figma`);
+                const json = await res.json();
+                if (json.success && Array.isArray(json.data)) setMcpInsights(json.data);
+              }}
+              onBackToTasks={() => handleAssessmentTabChange('task')}
+            />
+          )}
 
-              {/* Messages Area */}
-              <div className="flex-1 overflow-y-auto p-4 sm:p-6 min-h-0">
-                <div className="max-w-3xl mx-auto space-y-4">
-                  {/* Show problem context if available (for code challenges) */}
-                  {currentProblem !== null && problems.length > 0 && problems[currentProblem] && (
-                    <div className="border border-zinc-800 bg-zinc-900/50 backdrop-blur-sm rounded-xl p-4 mb-4">
-                      <p className="text-white font-semibold mb-2 text-sm sm:text-base">{problems[currentProblem].title}</p>
-                      <p className="text-zinc-400 text-xs sm:text-sm">{problems[currentProblem].description}</p>
-                      <p className="text-zinc-500 text-[10px] sm:text-xs mt-2">Ask me anything about this problem!</p>
-                    </div>
-                  )}
-                  {/* Show IDE challenge context if no problem selected */}
-                  {isIDEChallenge && (currentProblem === null || problems.length === 0) && assessmentTemplate && Array.isArray(assessmentTemplate) && assessmentTemplate.length > 0 && (
-                    <div className="border border-zinc-800 bg-zinc-900/50 backdrop-blur-sm rounded-xl p-4 mb-4">
-                      <p className="text-white font-semibold mb-2 text-sm sm:text-base">
-                        {assessmentTemplate[0]?.title || 'IDE Challenge'}
-                      </p>
-                      <p className="text-zinc-400 text-xs sm:text-sm">
-                        {assessmentTemplate[0]?.description || assessmentTemplate[0]?.components?.join(', ') || 'Work on the IDE challenge tasks'}
-                      </p>
-                      <p className="text-zinc-500 text-[10px] sm:text-xs mt-2">Ask me anything about this challenge!</p>
-                    </div>
-                  )}
-                  
-                  <div className="space-y-4">
-                    {messages.length === 0 ? (
-                      <div className="text-center text-zinc-400 py-12">
-                        <MessageSquare className="h-8 w-8 mx-auto mb-3 text-zinc-600" />
-                        <p className="text-sm">Start a conversation with AI</p>
-                      </div>
-                    ) : (
-                      messages.map((msg, idx) => {
-                        const codeBlockRegex = /```([\s\S]*?)```/g;
-                        const hasCode = codeBlockRegex.test(msg.content);
-                        let parts: React.ReactElement[] = [];
-                        
-                        if (hasCode && msg.role === 'assistant') {
-                          const regex = /```(\w+)?\n([\s\S]*?)```/g;
-                          const matches: RegExpExecArray[] = [];
-                          let match;
-                          while ((match = regex.exec(msg.content)) !== null) {
-                            matches.push(match);
-                          }
-                          let lastIndex = 0;
-                          
-                          for (const match of matches) {
-                            if (match.index && match.index > lastIndex) {
-                              const text = msg.content.substring(lastIndex, match.index);
-                              if (text.trim()) {
-                                parts.push(<span key={`text-${lastIndex}`}>{text}</span>);
-                              }
-                            }
-                            
-                            const code = match[2];
-                            parts.push(
-                              <div key={`code-${match.index}`} className="my-2">
-                                <div className="border border-zinc-800 bg-zinc-950 rounded-lg p-3">
-                                  <pre className="text-xs sm:text-sm text-zinc-200 whitespace-pre-wrap overflow-x-auto font-mono">{code}</pre>
-                                  <button
-                                    onClick={() => {
-                                      navigator.clipboard.writeText(code);
-                                      trackCodeCopy(code, selectedLLM || undefined);
-                                      alert('Code copied to clipboard');
-                                    }}
-                                    className="mt-2 px-2 sm:px-3 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs rounded transition-colors"
-                                  >
-                                    📋 Copy Code
-                                  </button>
-                                </div>
-                              </div>
-                            );
-                            
-                            lastIndex = (match.index || 0) + match[0].length;
-                          }
-                          
-                          if (lastIndex < msg.content.length) {
-                            const text = msg.content.substring(lastIndex);
-                            if (text.trim()) {
-                              parts.push(<span key={`text-end`}>{text}</span>);
-                            }
-                          }
-                        }
-                        
-                        return (
-                          <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                            <div className={`max-w-[75%] sm:max-w-[70%] rounded-lg px-3 sm:px-4 py-2 sm:py-3 text-xs sm:text-sm ${
-                              msg.role === 'user' 
-                                ? 'bg-emerald-500/20 border border-emerald-500/30 text-emerald-200' 
-                                : 'bg-zinc-900/50 border border-zinc-800 text-zinc-200'
-                            }`}>
-                              {parts.length > 0 ? parts : msg.content}
-                            </div>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
-              </div>
+          {/* SHEETS (Google Sheets) VIEW */}
+          {activeTab === 'sheets' && isSheetsChallenge && (
+            <SheetsTabView
+              sheetsUrl={sheetsUrlOverride ?? sessionData?.sheetsFileUrl ?? null}
+              assessmentMeta={sessionData?.assessmentMeta}
+              onProvisionSheets={async () => {
+                if (!sessionData?.id) return;
+                setSheetsProvisioning(true);
+                try {
+                  const res = await fetch(`${API_BASE_URL}/api/sessions/${sessionData.id}/provision-sheets`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      sheetsTemplateId: sessionData?.assessmentMeta?.sheetsTemplateId ?? undefined
+                    })
+                  });
+                  const json = await res.json();
+                  if (json.success && json.url) {
+                    setSheetsUrlOverride(json.url);
+                  } else {
+                    const msg = json.error || 'Provision failed';
+                    if (json.code === 'MISSING_TEMPLATE_ID') {
+                      throw new Error('Backend needs SHEETS_TEMPLATE_ID in .env or sheetsTemplateId in the assessment.');
+                    }
+                    throw new Error(msg);
+                  }
+                } finally {
+                  setSheetsProvisioning(false);
+                }
+              }}
+              provisioning={sheetsProvisioning}
+              onBackToTasks={() => handleAssessmentTabChange('task')}
+            />
+          )}
 
-              {/* Input Area */}
-              <div className="border-t border-zinc-800 bg-zinc-950/90 px-4 sm:px-6 py-3 sm:py-4 shrink-0">
-                {!selectedLLM ? (
-                  <div className="max-w-3xl mx-auto text-center py-2">
-                    <p className="text-zinc-400 text-xs sm:text-sm">Please select an AI assistant first</p>
-                  </div>
-                ) : (
-                  <div className="max-w-3xl mx-auto flex gap-2 sm:gap-3">
-                    <input
-                      type="text"
-                      value={inputMessage}
-                      onChange={(e) => setInputMessage(e.target.value)}
-                      onKeyPress={(e) => {
-                        if (e.key === 'Enter' && !isAiLoading) {
-                          handleSendMessage();
-                        }
-                      }}
-                      disabled={isAiLoading}
-                      placeholder={isAiLoading ? "AI is thinking..." : "Type your message..."}
-                      className="flex-1 px-3 sm:px-4 py-2 sm:py-3 bg-zinc-900 border border-zinc-800 rounded-lg text-white text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500/50 disabled:opacity-50 disabled:cursor-not-allowed"
-                    />
-                    <button
-                      onClick={handleSendMessage}
-                      disabled={isAiLoading || !inputMessage.trim()}
-                      className="px-4 sm:px-6 py-2 sm:py-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 rounded-lg text-xs sm:text-sm font-medium hover:bg-emerald-500/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {isAiLoading ? 'Sending...' : 'Send'}
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
+
+          {/* DATABASE VIEW — pgweb iframe on port 5050 */}
+          {activeTab === 'database' && isDatabaseChallenge && sessionData?.id && (
+            <DatabaseTabView
+              sessionId={sessionData.id}
+              dbUrl={
+                (sessionData as any).db_url ||
+                ((sessionData as any).containerUrl
+                  ? (sessionData as any).containerUrl.replace(/:(\d+)\/?$/, ':5050')
+                  : null)
+              }
+              onBackToTasks={() => handleAssessmentTabChange('task')}
+            />
+          )}
+
+          {/* DOCS VIEW */}
+          {activeTab === 'docs' && isDocsChallenge && sessionData?.id && (
+            <DocsTabView
+              sessionId={sessionData.id}
+              sessionCode={sessionCode ?? (sessionData as any).sessionCode ?? null}
+              existingUrl={(sessionData as any).docsFileUrl}
+              taskTitle={problems[currentProblem]?.title}
+              taskDescription={problems[currentProblem]?.description}
+              onBackToTasks={() => handleAssessmentTabChange('task')}
+            />
           )}
 
           {/* CODE VIEW - Only for code challenges */}
@@ -2322,7 +2960,7 @@ export default function AssessmentPage({
                     <div className="px-4 sm:px-6 py-3 border-b border-zinc-800 bg-zinc-950/90 flex items-center justify-between shrink-0">
                       <h2 className="text-base sm:text-lg font-bold text-white truncate">{problems[currentProblem].title}</h2>
                       <button
-                        onClick={() => setActiveTab('task')}
+                        onClick={() => handleAssessmentTabChange('task')}
                         className="p-1 text-zinc-400 hover:text-zinc-200 text-xs sm:text-sm"
                       >
                         <X className="h-4 w-4" />
@@ -2572,80 +3210,88 @@ export default function AssessmentPage({
             </div>
           )}
 
-          {/* IDE VIEW - Only for IDE challenges */}
-          {activeTab === 'ide' && isIDEChallenge && !isCodeChallenge && (
-            <div className="flex-1 flex relative overflow-hidden h-full w-full">
-              <StackBlitzIDE
-                ref={ideRef}
-                sessionId={sessionData?.id || null}
-                templateFiles={templateFiles || {}}
-                tasks={assessmentTemplate && Array.isArray(assessmentTemplate) && assessmentTemplate.length > 0
-                  ? assessmentTemplate.map((task: any, index: number) => {
-                      // Handle requirements - convert objects to strings if needed
-                      let requirements: string[] = [];
-                      if (task.components && Array.isArray(task.components)) {
-                        requirements = task.components;
-                      } else if (task.requirements && Array.isArray(task.requirements)) {
-                        requirements = task.requirements.map((r: any) => 
-                          typeof r === 'string' ? r : r.description || r.id || JSON.stringify(r)
-                        );
-                      } else if (task.tasks && Array.isArray(task.tasks)) {
-                        // Extract requirements from nested tasks
-                        requirements = task.tasks.flatMap((t: any) => 
-                          (t.requirements || []).map((r: any) => 
-                            typeof r === 'string' ? r : r.description || r.id || JSON.stringify(r)
-                          )
-                        );
+          {/* IDE VIEW - Mount when IDE challenge so it loads in background; hide when not active */}
+          {isIDEChallenge && !isCodeChallenge && (
+            <div className={`flex-1 flex relative overflow-hidden h-full w-full ${activeTab !== 'ide' ? 'hidden' : ''}`}>
+              {ideStatus.error && (
+                <div className="absolute inset-0 z-50 flex items-center justify-center bg-zinc-950/95 p-4">
+                  <div className="text-center max-w-md">
+                    <p className="text-red-400 font-semibold mb-2">IDE Unavailable</p>
+                    <p className="text-zinc-400 text-sm mb-4">{ideStatus.error}</p>
+                    <p className="text-zinc-500 text-xs mb-4">Tasks can still be viewed from the Task tab.</p>
+                    {ideStatus.error?.toLowerCase().includes('cross-origin') && typeof window !== 'undefined' && (
+                      <Button
+                        variant="outline"
+                        onClick={() => window.open(window.location.href, '_blank', 'noopener,noreferrer')}
+                        className="border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/20"
+                      >
+                        <ExternalLink className="h-4 w-4 mr-2" />
+                        Open assessment in new tab
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
+              {useAzureContainer ? (
+                sessionData?.id ? (
+                  <AzureContainerIDE
+                    sessionId={sessionData.id}
+                    assessmentId={sessionData?.assessmentId || sessionData?.assessment?.id}
+                    preProvisionedUrl={sessionData?.containerUrl || null}
+                    onReady={() => setIdeStatus('ready')}
+                    onError={(error) => {
+                      setIdeStatus('error');
+                      console.error('Azure Container IDE error:', error);
+                    }}
+                    messages={messages}
+                    onSendMessage={handleSendMessage}
+                    inputMessage={inputMessage}
+                    setInputMessage={setInputMessage}
+                    selectedLLM={selectedLLM}
+                    showChatbot={true}
+                    templateFiles={templateFiles || {}}
+                  />
+                ) : (
+                  <div className="flex flex-1 items-center justify-center bg-zinc-950 text-zinc-400 text-sm p-6">
+                    <Loader2 className="h-5 w-5 animate-spin mr-2 text-emerald-500" />
+                    Waiting for session before starting the IDE environment…
+                  </div>
+                )
+              ) : (
+                // StackBlitz PAUSED — using local Docker / Azure Container instead
+                <div className="flex flex-1 items-center justify-center bg-zinc-950 text-zinc-400 text-sm p-6">
+                  <p>WebContainer (StackBlitz) is currently paused. Azure Container IDE is in use.</p>
+                </div>
+              )}
+            </div>
+          )}
+          {/* AI Assistant Panel — inline right column */}
+          {isAIPanelOpen && (
+            <div className="w-[380px] shrink-0 border-l border-zinc-800 overflow-hidden flex flex-col">
+              <AIAssistantPanel
+                sessionId={sessionData?.id}
+                currentProblemIndex={currentProblem}
+                currentProblem={
+                  problems[currentProblem]
+                    ? {
+                        title: problems[currentProblem].title,
+                        description: problems[currentProblem].description,
+                        difficulty: (problems[currentProblem] as any).difficulty,
+                        requirements: (problems[currentProblem] as any).requirements,
                       }
-                      
-                      return {
-                        id: index + 1,
-                        title: task.title || `Task ${index + 1}`,
-                        description: task.components 
-                          ? `Complete the following tasks:\n${task.components.map((c: string, i: number) => `${i + 1}. ${c}`).join('\n')}`
-                          : task.description || task.title || `Assessment Task ${index + 1}`,
-                        requirements,
-                        duration: task.duration || undefined
-                      };
-                    })
-                  : problems.map((p: any) => ({
-                      id: p.id,
-                      title: p.title,
-                      description: p.description,
-                      requirements: (p.requirements || []).map((r: any) => 
-                        typeof r === 'string' ? r : r.description || r.id || JSON.stringify(r)
-                      ),
-                      duration: p.description?.match(/Duration: (.+)/)?.[1] || undefined
-                    }))}
-                messages={messages}
-                onSendMessage={(message) => {
-                  setInputMessage(message);
-                  handleSendMessage();
-                }}
-                inputMessage={inputMessage}
-                setInputMessage={setInputMessage}
-                selectedLLM={selectedLLM}
-                showLLMSelector={showLLMSelector}
-                onSelectLLM={(llm) => {
-                  setSelectedLLM(llm);
-                  setShowLLMSelector(false);
-                }}
-                onFileChange={(path, content) => {
-                  // Track file changes for MCP agents
-                  if (trackCodeModification) {
-                    trackCodeModification(
-                      sessionData?.id,
-                      0, // Line number (file-level change)
-                      '', // codeBefore (not available for file-level saves)
-                      content, // codeAfter
-                      path, // oldText repurposed as filePath context
-                      content // newText
-                    );
-                  }
-                }}
-                onTerminalOutput={(output) => {
-                  console.log('Terminal output:', output);
-                }}
+                    : undefined
+                }
+                allProblems={problems.map((p: any) => ({
+                  title: p.title,
+                  description: p.description,
+                  difficulty: p.difficulty,
+                  requirements: p.requirements,
+                }))}
+                role="candidate"
+                isOpen={isAIPanelOpen}
+                onClose={() => setIsAIPanelOpen(false)}
+                onSelectProblem={handleAssessmentProblemChange}
+                activeAssessmentTab={activeTab}
               />
             </div>
           )}
@@ -2664,7 +3310,7 @@ export default function AssessmentPage({
             </p>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-              {/* OpenAI */}
+              {/* OpenAI GPT-4o */}
               <button
                 onClick={() => {
                   if (isLLMAvailable('openai')) {
@@ -2687,12 +3333,12 @@ export default function AssessmentPage({
                   </div>
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
-                      <h4 className="text-white font-semibold">OpenAI GPT-3.5</h4>
+                      <h4 className="text-white font-semibold">OpenAI GPT-4o</h4>
                       {!isLLMAvailable('openai') && (
                         <span className="text-xs text-gray-500">(Not configured)</span>
                       )}
                     </div>
-                    <p className="text-gray-400 text-sm mt-1">Most capable model</p>
+                    <p className="text-gray-400 text-sm mt-1">Most capable model — fast, accurate, and great at code</p>
                     {!isLLMAvailable('openai') && (
                       <p className="text-xs text-gray-500 mt-1">Add NEXT_PUBLIC_OPENAI_API_KEY</p>
                     )}
@@ -2725,13 +3371,10 @@ export default function AssessmentPage({
                     <div className="flex items-center gap-2">
                       <h4 className="text-white font-semibold">Claude 3.5 Sonnet</h4>
                       {!isLLMAvailable('claude') && (
-                        <span className="text-xs text-gray-500">(Not implemented)</span>
+                        <span className="text-xs text-gray-500">(Coming soon)</span>
                       )}
                     </div>
                     <p className="text-gray-400 text-sm mt-1">Advanced reasoning</p>
-                    {!isLLMAvailable('claude') && (
-                      <p className="text-xs text-gray-500 mt-1">See ADD-NEW-LLM.md guide</p>
-                    )}
                   </div>
                 </div>
               </button>
@@ -2761,13 +3404,10 @@ export default function AssessmentPage({
                     <div className="flex items-center gap-2">
                       <h4 className="text-white font-semibold">Google Gemini Pro</h4>
                       {!isLLMAvailable('gemini') && (
-                        <span className="text-xs text-gray-500">(Not implemented)</span>
+                        <span className="text-xs text-gray-500">(Coming soon)</span>
                       )}
                     </div>
                     <p className="text-gray-400 text-sm mt-1">Multimodal AI</p>
-                    {!isLLMAvailable('gemini') && (
-                      <p className="text-xs text-gray-500 mt-1">See ADD-NEW-LLM.md guide</p>
-                    )}
                   </div>
                 </div>
               </button>
@@ -2797,13 +3437,10 @@ export default function AssessmentPage({
                     <div className="flex items-center gap-2">
                       <h4 className="text-white font-semibold">Anthropic Claude</h4>
                       {!isLLMAvailable('anthropic') && (
-                        <span className="text-xs text-gray-500">(Not implemented)</span>
+                        <span className="text-xs text-gray-500">(Coming soon)</span>
                       )}
                     </div>
                     <p className="text-gray-400 text-sm mt-1">Powerful assistant</p>
-                    {!isLLMAvailable('anthropic') && (
-                      <p className="text-xs text-gray-500 mt-1">See ADD-NEW-LLM.md guide</p>
-                    )}
                   </div>
                 </div>
               </button>

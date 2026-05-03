@@ -37,7 +37,33 @@ export interface RecordingState {
   screenStream: MediaStream | null;
 }
 
-export type TabType = 'task' | 'chat' | 'code' | 'ide';
+export type TabType = 'task' | 'code' | 'ide' | 'design' | 'sheets' | 'database' | 'docs';
+
+export interface DBColumn {
+  name: string;
+  type: string;
+  notNull: boolean;
+  defaultValue: string | null;
+  primaryKey: boolean;
+}
+
+export interface DBTable {
+  name: string;
+  columns: DBColumn[];
+  rowCount: number;
+}
+
+export interface DBSchema {
+  tables: DBTable[];
+}
+
+export interface DBQueryResult {
+  columns: string[];
+  rows: Record<string, any>[];
+  rowCount: number;
+  error?: string;
+  executionMs?: number;
+}
 
 export type Language = 'javascript' | 'python' | 'java' | 'cpp';
 

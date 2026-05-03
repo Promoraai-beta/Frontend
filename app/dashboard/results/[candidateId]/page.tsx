@@ -25,6 +25,9 @@ export default function ResultsPage() {
     watcher: any;
     extractor: any;
     sanity: any;
+    judge?: any;
+    geminiVideoAnalysis?: any;
+    metrics?: any;
   } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -107,19 +110,22 @@ export default function ResultsPage() {
           const agentsData = await agentsRes.json()
           
           if (agentsData.success && agentsData.report) {
-            const { watcher, extractor, sanity } = agentsData.report
-            
+            const { watcher, extractor, sanity, judge, geminiVideoAnalysis, metrics } = agentsData.report
+
             // Set watcher data (violations, risk score)
             if (watcher) {
               setViolations(watcher.violations || [])
               setRiskScore(watcher.riskScore || sanity?.riskScore || 0)
             }
-            
+
             // Store all agent insights for detailed view
             setAgentInsights({
               watcher: watcher || null,
               extractor: extractor || null,
-              sanity: sanity || null
+              sanity: sanity || null,
+              judge: judge || null,
+              geminiVideoAnalysis: geminiVideoAnalysis || null,
+              metrics: metrics || null
             })
           } else {
             // Fallback to watcher-only endpoint
@@ -198,25 +204,68 @@ export default function ResultsPage() {
         <RecruiterNavbar />
         
         <div className="container mx-auto p-4 pt-24 md:p-6 md:pt-28">
-          {/* Header */}
-          <div className="mb-6 flex items-center gap-4">
-            <Button
-              onClick={() => router.push("/dashboard")}
-              variant="ghost"
-              size="sm"
-              className="text-zinc-400 hover:text-white"
-            >
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to Dashboard
-            </Button>
-            <div className="h-6 w-px bg-zinc-800" />
-            <div>
-              <h1 className="text-lg font-semibold text-white">
-                {session.candidateName || session.candidate_name || "Candidate"} - Results
-              </h1>
-              <p className="text-sm text-zinc-400">
-                Session: {session.sessionCode || session.session_code || sessionId}
-              </p>
+          {/* Rich header */}
+          <div className="mb-6">
+            {/* Breadcrumb */}
+            <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
+              <button onClick={() => router.back()} className="hover:text-foreground transition-colors flex items-center gap-1">
+                <ArrowLeft className="h-3.5 w-3.5" />
+                Back
+              </button>
+              <span>/</span>
+              <span>{session.assessment?.jobTitle || session.assessment?.role || 'Assessment'}</span>
+              <span>/</span>
+              <span className="text-foreground">{session.candidateName || session.candidate_name || 'Candidate'} — Results</span>
+            </div>
+
+            {/* Candidate info row */}
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-center gap-4">
+                {/* Avatar */}
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-violet-600 text-background text-sm font-bold flex-shrink-0">
+                  {(session.candidateName || session.candidate_name || 'C').split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h1 className="text-xl font-bold text-foreground">
+                      {session.candidateName || session.candidate_name || 'Candidate'} — Results
+                    </h1>
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 text-xs font-medium text-emerald-400">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                      Completed
+                    </span>
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-0.5">
+                    {[
+                      session.assessment?.jobTitle || session.assessment?.role,
+                      session.endedAt ? `Submitted ${new Date(session.endedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` : null,
+                      session.startedAt && session.endedAt
+                        ? `Duration ${Math.floor((new Date(session.endedAt).getTime() - new Date(session.startedAt).getTime()) / 60000)}:${String(Math.floor(((new Date(session.endedAt).getTime() - new Date(session.startedAt).getTime()) % 60000) / 1000)).padStart(2, '0')}`
+                        : null
+                    ].filter(Boolean).join(' · ')}
+                  </p>
+                </div>
+              </div>
+
+              {/* Action buttons */}
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <Button
+                  onClick={() => router.push(`/dashboard/report/${sessionId}`)}
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 border-border text-foreground hover:bg-muted"
+                >
+                  <ArrowLeft className="h-4 w-4 rotate-[225deg]" />
+                  Export
+                </Button>
+                <Button
+                  onClick={() => router.push(`/dashboard/report/${sessionId}`)}
+                  size="sm"
+                  className="gap-2 bg-violet-600 text-white hover:bg-violet-700"
+                >
+                  View Full Report
+                </Button>
+              </div>
             </div>
           </div>
 

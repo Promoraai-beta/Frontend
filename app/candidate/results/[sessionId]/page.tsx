@@ -1,6 +1,7 @@
 "use client"
 import { useState, useEffect } from "react"
-import { useParams, useRouter } from "next/navigation"
+import { useRouter } from "next/navigation"
+import { useNextParams } from "@/lib/next-dynamic-props"
 import { ProtectedRoute } from "@/components/protected-route"
 import { CandidateNavbar } from "@/components/candidate/candidate-navbar"
 import { AnimatedBackground } from "@/components/animated-background"
@@ -12,7 +13,7 @@ import { SessionDetailView } from "@/components/results/session-detail-view"
 import { useAuth } from "@/components/auth-provider"
 
 export default function CandidateResultsPage() {
-  const params = useParams()
+  const params = useNextParams()
   const router = useRouter()
   const { user } = useAuth()
   const sessionId = params.sessionId as string
@@ -26,6 +27,8 @@ export default function CandidateResultsPage() {
     watcher: any;
     extractor: any;
     sanity: any;
+    judge?: any;
+    metrics?: any;
   } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -98,13 +101,15 @@ export default function CandidateResultsPage() {
           const agentsData = await agentsRes.json()
           
           if (agentsData.success && agentsData.report) {
-            const { watcher, extractor, sanity } = agentsData.report
+            const { watcher, extractor, sanity, judge, metrics } = agentsData.report
             // Store agent insights for candidate-friendly view (simplified)
             // Note: Candidates only see educational insights, not monitoring/violation data
             setAgentInsights({
               watcher: null, // Don't show monitoring data to candidates
               extractor: extractor || null, // Show code analysis and behavior
-              sanity: null // Don't show risk assessment to candidates
+              sanity: null, // Don't show risk assessment to candidates
+              judge: judge || null, // Tips for improvement (strengths, weaknesses, narrative)
+              metrics: metrics || null, // Prompt IQ, self-reliance, etc.
             })
           }
         } catch (agentsError) {

@@ -1,13 +1,15 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { flushSync } from "react-dom"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { api } from "@/lib/api"
-import { CheckCircle, Loader2, Sparkles, Mail } from "lucide-react"
+import { waitForSessionEnvironmentReady } from "@/lib/provisionSessionEnvironment"
+import { CheckCircle, Copy, ExternalLink, Loader2, Sparkles, Mail } from "lucide-react"
 import { useAuth } from "@/components/auth-provider"
 
 interface GenerateAssessmentForCandidateModalProps {
@@ -33,7 +35,13 @@ export function GenerateAssessmentForCandidateModal({
   onSuccess,
 }: GenerateAssessmentForCandidateModalProps) {
   const { user } = useAuth()
-  const [step, setStep] = useState<"form" | "generating" | "creating" | "success">("form")
+  const [step, setStep] = useState<"form" | "generating" | "creating" | "provisioning" | "success">("form")
+  const [provisionError, setProvisionError] = useState<string | null>(null)
+  const [provisionContext, setProvisionContext] = useState<{
+    sessionId: string
+    assessmentId: string
+    base: Record<string, unknown>
+  } | null>(null)
   const [jobTitle, setJobTitle] = useState("")
   const [jobDescription, setJobDescription] = useState("")
   const [timeLimit, setTimeLimit] = useState(60)
@@ -84,6 +92,8 @@ This assessment will evaluate the candidate's proficiency in ${skillsList} and t
       setGeneratedAssessment(null)
       setCreatedSession(null)
       setError("")
+      setProvisionError(null)
+      setProvisionContext(null)
     }
   }, [open])
 
@@ -145,13 +155,30 @@ This assessment will evaluate the candidate's proficiency in ${skillsList} and t
       const data = await response.json()
 
       if (data.success) {
-        setCreatedSession({
+        const sc = data.data.sessionCode
+        const fromApi = data.data.assessmentUrl as string | undefined
+        const base = {
           ...data.data,
-          assessmentUrl: `${typeof window !== "undefined" ? window.location.origin : ""}/assessment/${data.data.sessionCode}`,
+          emailDelivered: data.data.emailDelivered === true,
+          assessmentUrl:
+            fromApi ||
+            `${typeof window !== "undefined" ? window.location.origin : ""}/assessment/${sc}`,
+        }
+        const sid = data.data.id as string
+        flushSync(() => {
+          setProvisionError(null)
+          setProvisionContext({ sessionId: sid, assessmentId, base })
+          setStep("provisioning")
         })
-        setStep("success")
-        if (onSuccess) {
-          onSuccess()
+        setIsCreating(false)
+        try {
+          await waitForSessionEnvironmentReady({ sessionId: sid, assessmentId })
+          setCreatedSession(base)
+          setStep("success")
+          setProvisionContext(null)
+          onSuccess?.()
+        } catch (e: unknown) {
+          setProvisionError(e instanceof Error ? e.message : "Environment failed to start")
         }
       } else {
         setError(data.error || "Failed to create session and send invitation")
@@ -166,59 +193,122 @@ This assessment will evaluate the candidate's proficiency in ${skillsList} and t
     }
   }
 
+  const retryGenerateProvision = async () => {
+    if (!provisionContext) return
+    setProvisionError(null)
+    try {
+      await waitForSessionEnvironmentReady({
+        sessionId: provisionContext.sessionId,
+        assessmentId: provisionContext.assessmentId,
+      })
+      setCreatedSession(provisionContext.base)
+      setStep("success")
+      setProvisionContext(null)
+      onSuccess?.()
+    } catch (e: unknown) {
+      setProvisionError(e instanceof Error ? e.message : "Environment failed to start")
+    }
+  }
+
+  if (step === "provisioning") {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="bg-zinc-950 border-zinc-800 text-white max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-white">Preparing assessment environment</DialogTitle>
+            <DialogDescription className="text-zinc-400">
+              Starting the code workspace. This can take 30–90 seconds on cloud hosting.
+            </DialogDescription>
+          </DialogHeader>
+          {!provisionError ? (
+            <div className="flex flex-col items-center py-8 gap-4">
+              <Loader2 className="h-10 w-10 animate-spin text-emerald-400" />
+              <p className="text-sm text-zinc-400 text-center">Keep this window open until the link appears.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <p className="text-sm text-red-400">{provisionError}</p>
+              <div className="flex gap-2">
+                <Button type="button" onClick={retryGenerateProvision} className="flex-1">
+                  Retry
+                </Button>
+                <Button type="button" variant="outline" onClick={() => onOpenChange(false)} className="flex-1">
+                  Close
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    )
+  }
+
   if (step === "success" && createdSession) {
+    const url = createdSession.assessmentUrl as string
+    const code = createdSession.sessionCode as string
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="bg-zinc-950 border-zinc-800 text-white max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-white">
               <CheckCircle className="h-5 w-5 text-emerald-400" />
-              Assessment Generated & Invitation Sent!
+              Session ready — share with {candidate.name}
             </DialogTitle>
             <DialogDescription className="text-zinc-400">
-              A personalized assessment has been generated for {candidate.name} and an invitation has been sent.
+              Copy the link and session code below for {candidate.email}.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
             <div>
-              <Label className="text-zinc-300 mb-2 block">Assessment Title</Label>
+              <Label className="text-zinc-300 mb-2 block">Assessment</Label>
               <div className="border border-zinc-800 bg-zinc-900 rounded-lg p-3">
                 <p className="text-white">{jobTitle}</p>
               </div>
             </div>
 
-            <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-6 text-center">
-              <CheckCircle className="h-12 w-12 text-emerald-400 mx-auto mb-4" />
-              <p className="text-emerald-300 text-lg font-semibold mb-2">
-                Email Sent Successfully!
-              </p>
-              <p className="text-zinc-400 text-sm">
-                The assessment invitation has been sent to <strong>{candidate.email}</strong>. 
-                They will receive the session link and code to start the assessment.
-              </p>
+            <div className="border border-zinc-800 bg-zinc-900/80 rounded-lg p-4 space-y-3">
+              <div>
+                <Label className="text-zinc-400 text-xs uppercase tracking-wide">Assessment link</Label>
+                <code className="mt-1 block text-xs text-emerald-300/95 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 break-all">
+                  {url}
+                </code>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" size="sm" className="gap-1" onClick={() => navigator.clipboard.writeText(url)}>
+                  <Copy className="h-3.5 w-3.5" />
+                  Copy link
+                </Button>
+                <Button type="button" variant="outline" size="sm" className="gap-1" asChild>
+                  <a href={url} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    Open
+                  </a>
+                </Button>
+              </div>
+              <div>
+                <Label className="text-zinc-400 text-xs uppercase tracking-wide">Session code</Label>
+                <div className="mt-1 flex items-center gap-2">
+                  <code className="text-sm font-mono text-white bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-1.5">{code}</code>
+                  <Button type="button" variant="ghost" size="sm" onClick={() => navigator.clipboard.writeText(code)}>
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
             </div>
 
-            <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4">
-              <p className="text-blue-300 text-sm">
-                📧 The candidate will receive an email with:
-              </p>
-              <ul className="text-zinc-400 text-sm mt-2 space-y-1 ml-4">
-                <li>• Assessment invitation link</li>
-                <li>• Session code</li>
-                <li>• Time limit information</li>
-                <li>• What to expect during the assessment</li>
-              </ul>
-            </div>
+            {createdSession.emailDelivered ? (
+              <p className="text-zinc-500 text-xs">An email was also sent with this link and code.</p>
+            ) : (
+              <p className="text-amber-500/90 text-xs">Server email is not configured — share the link and code manually.</p>
+            )}
 
-            <div className="flex gap-3">
-              <Button
-                onClick={() => onOpenChange(false)}
-                className="flex-1 bg-emerald-500/10 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20"
-              >
-                Done
-              </Button>
-            </div>
+            <Button
+              onClick={() => onOpenChange(false)}
+              className="w-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20"
+            >
+              Done
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

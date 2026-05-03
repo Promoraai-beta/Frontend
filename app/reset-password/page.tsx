@@ -40,7 +40,7 @@ function ResetPasswordForm() {
       setResetToken(tokenParam)
       setStep("reset") // Skip verification if token is provided
     }
-  }, [searchParams])
+  }, [searchParams.get('email'), searchParams.get('token')])
 
   const handleVerifyCode = async (e: React.FormEvent) => {
     e.preventDefault()

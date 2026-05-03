@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { LLMProvider } from './types';
+import { buildFullWorkflowSystemPrompt } from './context';
 
 /**
  * OpenAI GPT Service
@@ -17,16 +18,13 @@ export class OpenAIService implements LLMProvider {
     this.model = process.env.NEXT_PUBLIC_CHAT_OPENAI_MODEL || 'gpt-3.5-turbo';
     this.temperature = parseFloat(process.env.NEXT_PUBLIC_CHAT_TEMPERATURE || '0.7');
     
-    // Debug logging (only in development)
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[OpenAI Service] Configuration:', {
-        hasApiKey: !!this.apiKey,
-        apiKeyLength: this.apiKey?.length || 0,
-        apiKeyPrefix: this.apiKey ? `${this.apiKey.substring(0, Math.min(10, this.apiKey.length))}...` : 'N/A',
-        model: this.model,
-        temperature: this.temperature,
-        envVarExists: typeof process.env.NEXT_PUBLIC_OPENAI_API_KEY !== 'undefined'
-      });
+    // Log only once per session when key is missing (avoid console spam)
+    if (process.env.NODE_ENV === 'development' && !this.apiKey && typeof window !== 'undefined') {
+      const logged = (window as any).__openai_config_logged;
+      if (!logged) {
+        console.warn('[OpenAI Service] No NEXT_PUBLIC_OPENAI_API_KEY — AI chat will be unavailable.');
+        (window as any).__openai_config_logged = true;
+      }
     }
     
     if (this.apiKey) {
@@ -43,23 +41,10 @@ export class OpenAIService implements LLMProvider {
   }
 
   isConfigured(): boolean {
-    const configured = !!this.apiKey && !!this.client;
-    
-    // Debug logging (only in development)
-    if (process.env.NODE_ENV === 'development' && !configured) {
-      console.warn('[OpenAI Service] Not configured:', {
-        hasApiKey: !!this.apiKey,
-        hasClient: !!this.client,
-        apiKeyPreview: this.apiKey ? `${this.apiKey.substring(0, Math.min(10, this.apiKey.length))}...` : 'undefined',
-        envVarExists: typeof process.env.NEXT_PUBLIC_OPENAI_API_KEY !== 'undefined',
-        envVarLength: process.env.NEXT_PUBLIC_OPENAI_API_KEY?.length || 0
-      });
-    }
-    
-    return configured;
+    return !!this.apiKey && !!this.client;
   }
 
-  async chat(messages: Array<{role: string, content: string}>, _problemContext?: string): Promise<string> {
+  async chat(messages: Array<{role: string, content: string}>, context?: import('./context').FullWorkflowContext): Promise<string> {
     if (!this.client) {
       const errorMsg = this.apiKey 
         ? 'OpenAI API key is present but client initialization failed. Please check your API key format and restart the dev server.'
@@ -68,9 +53,11 @@ export class OpenAIService implements LLMProvider {
     }
 
     try {
-      // Messages can include system, user, and assistant roles
-      // Behave like standard ChatGPT: open-ended, no constraints
-      const allMessages = messages as any;
+      const systemPrompt = buildFullWorkflowSystemPrompt(context);
+      const hasSystem = messages.some(m => m.role === 'system');
+      const allMessages = hasSystem
+        ? (messages as any[])
+        : [{ role: 'system', content: systemPrompt }, ...messages];
 
       const completion = await this.client.chat.completions.create({
         model: this.model,

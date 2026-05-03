@@ -31,7 +31,7 @@ function RegisterForm() {
     if (emailParam) {
       setEmail(emailParam)
     }
-  }, [searchParams])
+  }, [searchParams.get('email'), searchParams.get('sessionId')])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

@@ -152,6 +152,19 @@
   background: var(--scrollbar-thumb-hover);
 }
 
+/* Hide xterm.js helper textarea (used for keyboard input, must be invisible) */
+.xterm .xterm-helper-textarea,
+.xterm-helper-textarea {
+  position: absolute !important;
+  opacity: 0 !important;
+  left: -9999em !important;
+  top: 0 !important;
+  width: 0 !important;
+  height: 0 !important;
+  z-index: -5 !important;
+  pointer-events: none !important;
+}
+
 /* Hide scrollbar utility for tab bars */
 .scrollbar-none::-webkit-scrollbar {
   display: none;

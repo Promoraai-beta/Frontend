@@ -1,12 +1,14 @@
 import { Navbar } from "@/components/homepage/navbar"
 import { HeroSection } from "@/components/homepage/hero-section"
+import { PromptIQSection } from "@/components/homepage/promptiq-section"
+import { BetSection } from "@/components/homepage/bet-section"
 import { ProblemSolutionSection } from "@/components/homepage/problem-solution-section"
 import { AboutSection } from "@/components/homepage/about-section"
 import { ComparisonSection } from "@/components/homepage/comparison-section"
 import { HowItWorksSection } from "@/components/homepage/how-it-works-section"
-// import { UseCasesSection } from "@/components/homepage/use-cases-section" // Hidden
-import { DemoSection } from "@/components/homepage/demo-section"
+import { VisionSection } from "@/components/homepage/vision-section"
 import { FaqSection } from "@/components/homepage/faq-section"
+import { CtaSection } from "@/components/homepage/cta-section"
 // import { TestimonialsSection } from "@/components/homepage/testimonials-section" // Hidden for now - testimonials are not real yet
 // import { ContactSection } from "@/components/homepage/contact-section" // Hidden for now - contact form not active yet
 // import { BlogSection } from "@/components/homepage/blog-section" // Hidden for future use
@@ -25,13 +27,13 @@ export default function HomePage() {
       <div className="relative z-10">
         <Navbar />
         <HeroSection />
-        <ProblemSolutionSection />
-        <AboutSection />
-        <ComparisonSection />
+        <PromptIQSection />
+        <BetSection />
         <HowItWorksSection />
-        {/* <UseCasesSection /> Hidden */}
-        <DemoSection />
+        <ComparisonSection />
+        <VisionSection />
         <FaqSection />
+        <CtaSection />
         {/* <TestimonialsSection /> Hidden until we have real testimonials */}
         {/* <ContactSection /> Hidden until contact form is live */}
         {/* <BlogSection /> Hidden for future use */}

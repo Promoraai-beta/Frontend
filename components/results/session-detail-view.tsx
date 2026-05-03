@@ -1,7 +1,8 @@
 "use client"
 
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { FileText, AlertTriangle, Video, Monitor, Code, User, CheckCircle, MessageSquare, Bot, UserCircle } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { FileText, AlertTriangle, Video, Monitor, Code, User, CheckCircle, MessageSquare, Bot, UserCircle, ExternalLink } from 'lucide-react'
 import { API_BASE_URL } from '@/lib/config'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -21,6 +22,37 @@ interface SessionDetailViewProps {
     watcher: any;
     extractor: any;
     sanity: any;
+    judge?: any; // LLM judge: strengths, weaknesses, ai_usage_narrative, candidate_fit_summary
+    geminiVideoAnalysis?: {
+      summary: string;
+      timeOnTask: string;
+      toolsObserved: string[];
+      suspiciousActivity: string[];
+      codingBehavior: string;
+      keyMoments: Array<{ timestamp: string; observation: string }>;
+      overallVerdict: 'focused' | 'somewhat_distracted' | 'distracted';
+      confidence: 'high' | 'medium' | 'low';
+      framesAnalyzed: number;
+      totalChunks: number;
+    } | null;
+    metrics?: {
+      promptQuality: number;
+      selfReliance: number;
+      promptIQ?: number;
+      promptCount: number;
+      copyCount: number;
+      applyCount?: number;
+      totalTokens?: number;
+      modelSwitches?: number;
+      modelBreakdown?: Array<{
+        model: string;
+        promptCount: number;
+        promptTokens: number;
+        completionTokens: number;
+        totalTokens: number;
+        avgLatencyMs: number;
+      }>;
+    };
   } | null
   isCandidateView?: boolean // If true, hide recruiter-specific information
 }
@@ -35,10 +67,27 @@ export function SessionDetailView({
   agentInsights,
   isCandidateView = false
 }: SessionDetailViewProps) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'submissions' | 'chat-history' | 'agent-insights' | 'recordings' | 'my-insights'>('overview')
+  const router = useRouter()
+  const [activeTab, setActiveTab] = useState<'overview' | 'submissions' | 'chat-history' | 'agent-insights' | 'recordings' | 'my-insights' | 'code'>('overview')
+  const [chatSubTab, setChatSubTab] = useState<'conversation' | 'code-actions'>('conversation')
+  const [selectedCodeFile, setSelectedCodeFile] = useState<string | null>(null)
+
+  // Parse finalCode: could be JSON { path: content } map (IDE) or plain string (legacy)
+  const parsedFiles = useMemo<Record<string, string> | null>(() => {
+    const raw = session?.finalCode
+    if (!raw || typeof raw !== 'string') return null
+    try {
+      const obj = JSON.parse(raw)
+      if (obj && typeof obj === 'object' && !Array.isArray(obj)) return obj as Record<string, string>
+    } catch { /* not JSON */ }
+    return null  // plain string — handled separately
+  }, [session?.finalCode])
   
-  // Normalize videoChunks to always be an array
-  const normalizedVideoChunks = Array.isArray(videoChunks) ? videoChunks : []
+  // Normalize videoChunks to always be an array — memoized so useEffect deps are stable
+  const normalizedVideoChunks = useMemo(
+    () => (Array.isArray(videoChunks) ? videoChunks : []),
+    [videoChunks]
+  )
   
   // Filter test results for candidates - only show visible test cases
   const filterTestResultsForCandidate = (testResults: any): any => {
@@ -110,26 +159,20 @@ export function SessionDetailView({
   
   // Determine if this is a coding challenge (not IDE challenge)
   // IDE challenges have templateFiles, coding challenges don't
-  const isCodingChallenge = useMemo(() => {
-    const assessment = session?.assessment;
-    if (!assessment) return false;
-    
-    // Check if session or assessment has templateFiles
-    // IDE challenges have templateFiles, coding challenges don't
-    const sessionTemplateFiles = session?.templateFiles || session?.container?.templateFiles;
-    const assessmentTemplateFiles = assessment.templateFiles;
-    
-    const hasTemplateFiles = (sessionTemplateFiles && 
-      typeof sessionTemplateFiles === 'object' && 
-      Object.keys(sessionTemplateFiles).length > 0) ||
-      (assessmentTemplateFiles && 
-      typeof assessmentTemplateFiles === 'object' && 
-      Object.keys(assessmentTemplateFiles).length > 0);
-    
-    return !hasTemplateFiles;
+  // Leetcode-style = no templateId on the assessment (IDE sessions have a templateId)
+  const isLeetcodeStyle = useMemo(() => {
+    return !session?.assessment?.templateId
   }, [session])
-  const webcamVideoRef = useRef<HTMLVideoElement>(null)
-  const screenshareVideoRef = useRef<HTMLVideoElement>(null)
+  // Blob URLs created from concatenated chunks — set on <video src>
+  const [webcamBlobUrl, setWebcamBlobUrl] = useState<string | null>(null)
+  const [screenshareBlobUrl, setScreenshareBlobUrl] = useState<string | null>(null)
+  // Loading progress state for each stream
+  const [webcamLoading, setWebcamLoading] = useState<{ total: number; done: number } | null>(null)
+  const [screenshareLoading, setScreenshareLoading] = useState<{ total: number; done: number } | null>(null)
+  // Refs track the *latest* blob URL for cleanup-on-unmount only.
+  // Using state values directly in a cleanup effect causes premature revocation.
+  const webcamBlobRef = useRef<string | null>(null)
+  const screenshareBlobRef = useRef<string | null>(null)
 
   // Filter submissions for recruiter view: only show coding assessments
   // A coding assessment submission must have:
@@ -165,846 +208,169 @@ export function SessionDetailView({
   // Calculate overall score based on filtered submissions
   const totalScore = filteredSubmissions.reduce((sum, s) => sum + (s.score || 0), 0)
   const maxScore = filteredSubmissions.length * 100
-  const percentageScore = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0
+  // For IDE/container sessions there are no submission records — fall back to the
+  // agent extractor's behaviorScore (0-100) so the recruiter sees a real number.
+  const agentBehaviorScore = agentInsights?.extractor?.behaviorScore
+    ?? agentInsights?.extractor?.overallScore
+    ?? null
+  // isIdeSession: true if containerUrl present, or if assessment has a templateId (IDE-type),
+  // or if extractor has overallScore (meaning analysis ran on an IDE session)
+  const isIdeSession = !!(
+    session?.containerUrl || session?.container_url ||
+    session?.assessment?.templateId ||
+    agentInsights?.extractor?.overallScore !== undefined
+  )
+  const percentageScore = maxScore > 0
+    ? Math.round((totalScore / maxScore) * 100)
+    : (isIdeSession && agentBehaviorScore !== null ? agentBehaviorScore : 0)
+  // For IDE sessions pending analysis, don't show Failed — show Pending instead
+  const isPendingAnalysis = isIdeSession && maxScore === 0 && agentBehaviorScore === null
   const passed = percentageScore >= 70 // 70% passing threshold
 
-  // Initialize video players when recordings tab is active using MediaSource API
+  // Fetch all chunks in parallel, concatenate into a single Blob, set as video src.
+  // This gives smooth, seek-friendly playback — the browser buffers it like a regular file.
   useEffect(() => {
     if (activeTab !== 'recordings' || normalizedVideoChunks.length === 0) return
 
-    let webcamMediaSource: MediaSource | null = null
-    let screenshareMediaSource: MediaSource | null = null
-    let isCleaningUp = false
+    let cancelled = false
 
-    // Sequential playback fallback - plays chunks one after another
-    const initializeSequentialPlayback = (chunks: any[], videoElement: HTMLVideoElement, streamType: string) => {
-      console.log(`🎬 ${streamType}: Initializing sequential playback with ${chunks.length} chunks`)
-      
-      let currentIndex = 0
-      let isPlaying = false
-      
-      const playNextChunk = () => {
-        if (currentIndex >= chunks.length || isCleaningUp) {
-          console.log(`✅ ${streamType}: Finished playing all ${chunks.length} chunks`)
-          return
-        }
-        
-        const chunk = chunks[currentIndex]
-        const chunkUrl = chunk.url?.startsWith('http') 
-          ? chunk.url
-          : `${API_BASE_URL}${chunk.url}`
-        
-        console.log(`▶️ ${streamType}: Playing chunk ${currentIndex + 1}/${chunks.length} (index ${chunk.chunkIndex || currentIndex})`)
-        
-        videoElement.src = chunkUrl
-        videoElement.load()
-        
-        const playPromise = videoElement.play()
-        if (playPromise !== undefined) {
-          playPromise
-            .then(() => {
-              isPlaying = true
-            })
-            .catch((e) => {
-              if (e.name !== 'NotAllowedError') {
-                console.warn(`${streamType}: Failed to play chunk ${currentIndex}:`, e)
-              }
-              // Try next chunk even if play fails
-              currentIndex++
-              playNextChunk()
-            })
-        }
-      }
-      
-      // When a chunk ends, play the next one
-      const handleEnded = () => {
-        console.log(`⏭️ ${streamType}: Chunk ${currentIndex + 1} ended, playing next...`)
-        isPlaying = false
-        currentIndex++
-        playNextChunk()
-      }
-      
-      // Handle errors - skip to next chunk
-      const handleError = (e: Event) => {
-        const error = videoElement.error
-        if (error) {
-          console.warn(`⚠️ ${streamType}: Error playing chunk ${currentIndex + 1}:`, {
-            code: error.code,
-            message: error.message
-          })
-        }
-        // Skip to next chunk on error
-        currentIndex++
-        playNextChunk()
-      }
-      
-      videoElement.addEventListener('ended', handleEnded)
-      videoElement.addEventListener('error', handleError)
-      
-      // Start playing first chunk
-      playNextChunk()
-      
-      // Return cleanup function
-      return () => {
-        videoElement.removeEventListener('ended', handleEnded)
-        videoElement.removeEventListener('error', handleError)
-        isPlaying = false
-      }
-    }
+    const loadStream = async (
+      streamType: 'webcam' | 'screenshare',
+      setLoading: React.Dispatch<React.SetStateAction<{ total: number; done: number } | null>>,
+      setBlobUrl: React.Dispatch<React.SetStateAction<string | null>>
+    ) => {
+      const chunks = normalizedVideoChunks
+        .filter(c => c.streamType === streamType || (!c.streamType && c.url?.includes(`/${streamType}/`)))
+        .sort((a: any, b: any) => (a.chunkIndex ?? 0) - (b.chunkIndex ?? 0))
 
-    const initializeVideoPlayer = async (chunks: any[], videoRef: React.RefObject<HTMLVideoElement | null>, streamType: string) => {
-      // Wait for video element to be available
-      await new Promise(resolve => setTimeout(resolve, 100))
-      
-      if (!videoRef.current || isCleaningUp) {
-        console.log(`${streamType}: Video element not found or cleaning up`)
-        return
-      }
+      if (chunks.length === 0) return
 
-      const video = videoRef.current
-      const streamChunks = chunks
-        .filter(c => {
-          // Prioritize streamType field - it's the most reliable
-          if (c.streamType) {
-            const matches = c.streamType === streamType
-            // If streamType matches but URL doesn't, log a warning
-            if (matches && c.url && !c.url.includes(`/${streamType}/`)) {
-              console.warn(`⚠️ ${streamType} chunk has streamType="${c.streamType}" but URL doesn't contain "/${streamType}/": ${c.url?.substring(Math.max(0, c.url.length - 60))}`)
-          }
-            return matches
-          }
-          // Fallback to URL-based detection
-          const urlMatches = c.url?.includes(`/${streamType}/`)
-          if (urlMatches) {
-            console.warn(`⚠️ ${streamType} chunk missing streamType field, using URL-based detection: ${c.url?.substring(Math.max(0, c.url.length - 60))}`)
-          }
-          return urlMatches
-        })
-        .sort((a, b) => (a.chunkIndex || 0) - (b.chunkIndex || 0))
-      
-      // Log filtered chunks for debugging
-      if (streamChunks.length > 0) {
-        logger.log(`✅ Filtered ${streamChunks.length} ${streamType} chunks`)
-        const firstUrl = streamChunks[0].url
-        if (firstUrl) {
-          // Show full URL or last 100 chars if very long
-          const urlDisplay = firstUrl.length > 100 
-            ? `...${firstUrl.substring(firstUrl.length - 100)}` 
-            : firstUrl
-          logger.log(`   First chunk URL: ${urlDisplay}`)
-        }
-        logger.log(`   First chunk streamType: ${streamChunks[0].streamType || 'missing'}`)
-        logger.log(`   First chunk index: ${streamChunks[0].chunkIndex ?? 'unknown'}`)
-      }
+      setLoading({ total: chunks.length, done: 0 })
 
-      if (streamChunks.length === 0) {
-        logger.log(`${streamType}: No chunks found`)
-        return
-      }
-
-      logger.log(`Initializing ${streamType} player with ${streamChunks.length} chunks using MediaSource API`)
-
-      try {
-        // Check if MediaSource is supported
-        if (!('MediaSource' in window)) {
-          console.warn(`${streamType}: MediaSource API not supported, using sequential playback`)
-          initializeSequentialPlayback(streamChunks, video, streamType)
-          return
-        }
-
-        // Create MediaSource
-        const mediaSource = new MediaSource()
-        
-        // Store reference for cleanup
-        if (streamType === 'webcam') {
-          webcamMediaSource = mediaSource
-        } else {
-          screenshareMediaSource = mediaSource
-        }
-        
-        const url = URL.createObjectURL(mediaSource)
-        video.src = url
-
-        // Add error handlers to video element
-        const handleVideoError = (e: Event) => {
-          const error = video.error
-          if (error) {
-            console.error(`❌ ${streamType}: Video element error:`, {
-              code: error.code,
-              message: error.message,
-              networkState: video.networkState,
-              readyState: video.readyState,
-              mediaSourceState: mediaSource.readyState
-            })
-            
-            // Don't close MediaSource on video errors - let it continue loading
-            // Some errors are recoverable (like network issues)
-          }
-        }
-
-        const handleVideoLoadStart = () => {
-          console.log(`📹 ${streamType}: Video load started`)
-        }
-
-        const handleVideoLoadedData = () => {
-          console.log(`✅ ${streamType}: Video data loaded`)
-        }
-
-        const handleVideoCanPlay = () => {
-          console.log(`▶️ ${streamType}: Video can play`)
-        }
-
-        video.addEventListener('error', handleVideoError)
-        video.addEventListener('loadstart', handleVideoLoadStart)
-        video.addEventListener('loadeddata', handleVideoLoadedData)
-        video.addEventListener('canplay', handleVideoCanPlay)
-
-        mediaSource.addEventListener('sourceopen', async () => {
-          // Check if we're still supposed to be initializing
-          if (isCleaningUp || mediaSource.readyState !== 'open') {
-            return
-          }
-
+      // Fetch all chunks in parallel so total download time = slowest single chunk
+      const buffers = await Promise.all(
+        chunks.map(async (chunk: any) => {
           try {
-            console.log(`${streamType}: MediaSource opened, creating SourceBuffer...`)
-
-            // Try different codecs
-            // For screenshare, try video-only codecs FIRST (screenshare typically has NO audio)
-            // Error message "misses expected opus track" confirms screenshare doesn't have audio
-            // For webcam, try codecs with audio first (webcam usually has audio)
-            const codecs = streamType === 'screenshare'
-              ? [
-                  'video/webm;codecs="vp9"',      // Video-only first (screenshare typically has no audio)
-                  'video/webm;codecs="vp8"',      // Video-only VP8
-                  'video/webm;codecs="vp9,opus"', // With audio fallback (in case screenshare has audio)
-                  'video/webm;codecs="vp8,opus"', // With audio VP8 fallback
-                  'video/webm'                    // Generic fallback
-                ]
-              : [
-                  'video/webm;codecs="vp9,opus"', // With audio first for webcam
-                  'video/webm;codecs="vp8,opus"',  // With audio VP8
-                  'video/webm;codecs="vp9"',       // Video-only fallback
-                  'video/webm;codecs="vp8"',       // Video-only VP8
-                  'video/webm'                      // Generic fallback
-                ]
-
-            let sourceBuffer: SourceBuffer | null = null
-            let selectedCodec: string | null = null
-
-            for (const codec of codecs) {
-              if (MediaSource.isTypeSupported(codec)) {
-                try {
-                  if (mediaSource.readyState !== 'open') {
-                    console.error(`${streamType}: MediaSource is no longer open`)
-                    return
-                  }
-                  sourceBuffer = mediaSource.addSourceBuffer(codec)
-                  selectedCodec = codec
-                  console.log(`✅ Created SourceBuffer for ${streamType} with codec: ${codec}`)
-                  break
-                } catch (e) {
-                  console.warn(`${streamType}: Failed to create SourceBuffer with ${codec}:`, e)
-                  continue
-                }
-              }
+            const url = chunk.url?.startsWith('http') ? chunk.url : `${API_BASE_URL}${chunk.url}`
+            const r = await fetch(url)
+            if (!r.ok) {
+              console.warn(`${streamType}: chunk ${chunk.chunkIndex} → ${r.status}, skipping`)
+              return null
             }
-
-            if (!sourceBuffer) {
-              console.error(`❌ ${streamType}: No supported codec found`)
-              if (mediaSource.readyState === 'open') {
-                try {
-                  mediaSource.endOfStream()
-                } catch (e) {
-                  console.warn(`${streamType}: Error ending stream:`, e)
-                }
-              }
-              return
-            }
-
-            // Store selected codec for error reporting
-            const finalSelectedCodec = selectedCodec
-
-            // Add SourceBuffer error handler
-            sourceBuffer.addEventListener('error', (e) => {
-              const error = sourceBuffer.error
-              const errorDetails = {
-                error: error,
-                errorCode: error?.code,
-                errorMessage: error?.message,
-                mediaSourceState: mediaSource.readyState,
-                sourceBufferUpdating: sourceBuffer.updating,
-                sourceBufferBuffered: sourceBuffer.buffered.length > 0 ? {
-                  start: sourceBuffer.buffered.start(0),
-                  end: sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1),
-                  length: sourceBuffer.buffered.length
-                } : 'empty',
-                selectedCodec: finalSelectedCodec,
-                availableCodecs: codecs,
-                event: e
-              }
-              
-              console.error(`❌ ${streamType}: SourceBuffer error:`, errorDetails)
-              
-              // If MediaSource ended, this usually means codec mismatch
-              if (mediaSource.readyState === 'ended') {
-                console.error(`❌ ${streamType}: MediaSource ended unexpectedly - likely codec mismatch!`)
-                console.error(`   Selected codec: ${finalSelectedCodec}`)
-                console.error(`   Selected codec may not match the actual codec in the video chunks`)
-                console.error(`   Available codecs tried: ${codecs.join(', ')}`)
-                console.error(`   This usually happens when:`)
-                console.error(`   - Screenshare was recorded with audio but codec doesn't include audio`)
-                console.error(`   - Screenshare was recorded without audio but codec includes audio`)
-                console.error(`   - Video was recorded with a different codec (VP8 vs VP9)`)
-                console.error(`   - Video format is not WebM`)
-                
-                // Don't try to recover - MediaSource cannot be reopened once ended
-                // The user will need to refresh or we'll need to reinitialize
-              } else if (error) {
-                // Log error code meanings
-                if (error.code === 4) {
-                  console.error(`   Error code 4 (MEDIA_ERR_SRC_NOT_SUPPORTED): Codec not supported or mismatch`)
-                } else if (error.code === 22) {
-                  console.error(`   Error code 22 (QUOTA_EXCEEDED_ERR): Buffer quota exceeded`)
-                }
-              }
-            })
-
-            sourceBuffer.addEventListener('abort', (e) => {
-              console.warn(`⚠️ ${streamType}: SourceBuffer aborted:`, e)
-            })
-
-            // Helper function to wait for SourceBuffer to be ready
-            const waitForSourceBuffer = async (): Promise<boolean> => {
-              try {
-                // First check if MediaSource is still open before waiting
-                if (mediaSource.readyState !== 'open') {
-                  console.warn(`${streamType}: MediaSource is not open (state: ${mediaSource.readyState})`)
-                  return false
-                }
-
-                // Check if SourceBuffer is still attached
-                if (!sourceBuffer || !mediaSource.sourceBuffers.length || mediaSource.sourceBuffers[0] !== sourceBuffer) {
-                  console.warn(`${streamType}: SourceBuffer is no longer attached`)
-                  return false
-                }
-
-                // Wait for any pending update to complete
-                while (sourceBuffer.updating) {
-                  // Check state before waiting
-                  if (mediaSource.readyState !== 'open') {
-                    console.warn(`${streamType}: MediaSource closed while waiting for update`)
-                    return false
-                  }
-                  
-                  try {
-                    await new Promise<void>((resolve, reject) => {
-                      const timeout = setTimeout(() => {
-                        sourceBuffer!.removeEventListener('updateend', onUpdateEnd)
-                        sourceBuffer!.removeEventListener('error', onError)
-                        console.warn(`${streamType}: Timeout waiting for SourceBuffer update`)
-                        reject(new Error('Timeout'))
-                      }, 10000) // 10 second timeout
-
-                      const onUpdateEnd = () => {
-                        clearTimeout(timeout)
-                        sourceBuffer!.removeEventListener('error', onError)
-                        resolve()
-                      }
-
-                      const onError = (e: Event) => {
-                        clearTimeout(timeout)
-                        sourceBuffer!.removeEventListener('updateend', onUpdateEnd)
-                        const error = sourceBuffer!.error
-                        const errorDetails = {
-                          error: error,
-                          errorCode: error?.code,
-                          errorMessage: error?.message,
-                          mediaSourceState: mediaSource.readyState,
-                          sourceBufferUpdating: sourceBuffer!.updating
-                        }
-                        console.error(`${streamType}: SourceBuffer error during wait:`, errorDetails)
-                        
-                        // Check if MediaSource ended (codec mismatch)
-                        if (mediaSource.readyState === 'ended') {
-                          reject(new Error(`MediaSource ended - codec mismatch (error code: ${error?.code})`))
-                        } else {
-                          reject(new Error(`SourceBuffer error (code: ${error?.code})`))
-                        }
-                      }
-
-                      sourceBuffer!.addEventListener('updateend', onUpdateEnd, { once: true })
-                      sourceBuffer!.addEventListener('error', onError, { once: true })
-                    })
-                  } catch (waitError) {
-                    console.warn(`${streamType}: Error waiting for SourceBuffer:`, waitError)
-                    return false
-                  }
-
-                  // Re-check state after waiting
-                  if (mediaSource.readyState !== 'open') {
-                    console.warn(`${streamType}: MediaSource closed after update wait`)
-                    return false
-                  }
-                }
-
-                // Final state check after waiting
-                if (mediaSource.readyState !== 'open') {
-                  console.warn(`${streamType}: MediaSource closed after update (state: ${mediaSource.readyState})`)
-                  return false
-                }
-
-                if (!sourceBuffer || !mediaSource.sourceBuffers.length || mediaSource.sourceBuffers[0] !== sourceBuffer) {
-                  console.warn(`${streamType}: SourceBuffer detached after update`)
-                  return false
-                }
-
-                return true
-              } catch (error) {
-                console.error(`${streamType}: Unexpected error in waitForSourceBuffer:`, error)
-                return false
-              }
-            }
-
-            // Fetch and append all chunks sequentially
-            let successCount = 0
-            let skippedCount = 0
-            let errorCount = 0
-            
-            console.log(`🚀 Starting to load ${streamChunks.length} ${streamType} chunks...`)
-            console.log(`   Chunk indices: ${streamChunks.map(c => c.chunkIndex || '?').join(', ')}`)
-            
-            for (let i = 0; i < streamChunks.length; i++) {
-              // Check if we should stop
-              if (isCleaningUp) {
-                console.log(`${streamType}: Stopping chunk loading (cleanup requested)`)
-                break
-              }
-              
-              if (mediaSource.readyState !== 'open') {
-                console.warn(`${streamType}: MediaSource is ${mediaSource.readyState} (expected 'open') - stopping chunk loading`)
-                console.warn(`   Successfully loaded: ${successCount}/${streamChunks.length} chunks`)
-                console.warn(`   Skipped: ${skippedCount} chunks`)
-                console.warn(`   Errors: ${errorCount} chunks`)
-                break
-              }
-
-              const chunk = streamChunks[i]
-              const chunkUrl = chunk.url?.startsWith('http') 
-                ? chunk.url
-                : `${API_BASE_URL}${chunk.url}`
-
-              const urlDisplay = chunkUrl.length > 80 
-                ? `...${chunkUrl.substring(chunkUrl.length - 80)}` 
-                : chunkUrl
-              console.log(`📦 [${i + 1}/${streamChunks.length}] Loading ${streamType} chunk ${chunk.chunkIndex ?? i} from ${urlDisplay}`)
-
-              try {
-                // Fetch chunk data
-                const response = await fetch(chunkUrl)
-                if (!response.ok) {
-                  if (response.status === 400 || response.status === 404) {
-                    console.error(`${streamType}: ❌ Chunk ${chunk.chunkIndex || i} not found (${response.status}) - file may not exist at corrected URL`)
-                    console.error(`   URL: ${urlDisplay}`)
-                    console.error(`   This may indicate a data inconsistency - the backend corrected the URL path but the file doesn't exist`)
-                    console.error(`   The actual file may have a different timestamp in the filename`)
-                  } else {
-                  console.error(`${streamType}: ❌ Failed to fetch chunk ${chunk.chunkIndex || i}: ${response.status}`)
-                  }
-                  errorCount++
-                  // Continue with next chunk - don't stop entirely
-                  continue
-                }
-
-                const arrayBuffer = await response.arrayBuffer()
-                if (arrayBuffer.byteLength === 0) {
-                  console.warn(`${streamType}: ⚠️ Chunk ${chunk.chunkIndex || i} is empty, skipping`)
-                  skippedCount++
-                  continue
-                }
-
-                console.log(`✅ Loaded ${streamType} chunk ${chunk.chunkIndex || i}: ${arrayBuffer.byteLength} bytes`)
-
-                // Wait for SourceBuffer to be ready
-                const isReady = await waitForSourceBuffer()
-                if (!isReady) {
-                  console.error(`${streamType}: ❌ SourceBuffer not ready after loading chunk ${chunk.chunkIndex || i}`)
-                  console.error(`   MediaSource state: ${mediaSource.readyState}`)
-                  console.error(`   Successfully appended so far: ${successCount} chunks`)
-                  // Don't break - try to continue with next chunk
-                  errorCount++
-                  continue
-                }
-
-                // Check video element for errors (but don't stop - some errors are recoverable)
-                if (video.error) {
-                  const error = video.error
-                  console.warn(`⚠️ ${streamType}: Video element has error (chunk ${chunk.chunkIndex || i}):`, {
-                    code: error.code,
-                    message: error.message
-                  })
-                  
-                  // MediaError codes:
-                  // 1 = MEDIA_ERR_ABORTED
-                  // 2 = MEDIA_ERR_NETWORK
-                  // 3 = MEDIA_ERR_DECODE
-                  // 4 = MEDIA_ERR_SRC_NOT_SUPPORTED
-                  // Only stop if it's a fatal source error (code 4)
-                  // Other errors might be recoverable
-                  if (error.code === 4) {
-                    console.error(`${streamType}: Fatal video error (source not supported) - stopping`)
-                    break
-                  }
-                  // Continue loading for other errors - they might resolve
-                  console.log(`${streamType}: Video error (code ${error.code}) - continuing`)
-                }
-
-                // Append chunk
-                try {
-                  // Double-check MediaSource is still open before appending
-                  if (mediaSource.readyState !== 'open') {
-                    console.warn(`${streamType}: MediaSource closed before appending chunk ${chunk.chunkIndex || i} (state: ${mediaSource.readyState})`)
-                    if (mediaSource.readyState === 'ended') {
-                      console.error(`${streamType}: MediaSource ended - codec mismatch detected. Stopping chunk loading.`)
-                      console.error(`   This usually means the selected codec doesn't match the video format.`)
-                      console.error(`   Successfully loaded: ${successCount}/${streamChunks.length} chunks before error`)
-                    }
-                    break
-                  }
-
-                  // Check SourceBuffer error before appending
-                  if (sourceBuffer.error) {
-                    const error = sourceBuffer.error
-                    console.error(`${streamType}: SourceBuffer has error before appending chunk ${chunk.chunkIndex || i}:`, {
-                      code: error.code,
-                      message: error.message
-                    })
-                    // MEDIA_ERR_SRC_NOT_SUPPORTED (4) means codec mismatch
-                    if (error.code === 4) {
-                      console.error(`${streamType}: Codec mismatch detected - stopping chunk loading`)
-                      break
-                    }
-                  }
-
-                  sourceBuffer.appendBuffer(arrayBuffer)
-                  successCount++
-                  
-                  // After first chunk, check for immediate errors (codec mismatch)
-                  if (i === 0) {
-                    // Wait a bit for error to surface if codec mismatch
-                    await new Promise(resolve => setTimeout(resolve, 100))
-                    if (sourceBuffer.error || mediaSource.readyState === 'ended') {
-                      const error = sourceBuffer.error
-                      console.error(`${streamType}: Error detected after first chunk append:`, {
-                        sourceBufferError: error ? { code: error.code, message: error.message } : null,
-                        mediaSourceState: mediaSource.readyState
-                      })
-                      if (mediaSource.readyState === 'ended' || (error && error.code === 4)) {
-                        console.error(`${streamType}: Codec mismatch detected on first chunk - selected codec doesn't match video format`)
-                        break
-                      }
-                    }
-                  }
-                  
-                  // Wait for append to complete
-                  const appendSuccess = await waitForSourceBuffer()
-                  if (!appendSuccess) {
-                    console.warn(`${streamType}: ⚠️ Failed to wait for SourceBuffer after appending chunk ${chunk.chunkIndex || i}`)
-                    console.warn(`   MediaSource state: ${mediaSource.readyState}`)
-                    errorCount++
-                    // Don't break - continue with next chunk if MediaSource is still open
-                    if (mediaSource.readyState === 'open') {
-                      continue
-                    } else {
-                      break
-                    }
-                  }
-                  console.log(`✅ Appended ${streamType} chunk ${chunk.chunkIndex || i} (${successCount}/${streamChunks.length})`)
-                } catch (appendError: any) {
-                  console.error(`❌ Error appending ${streamType} chunk ${chunk.chunkIndex || i}:`, appendError)
-                  errorCount++
-                  
-                  // If it's a QuotaExceededError, try to remove some old data
-                  if (appendError.name === 'QuotaExceededError' && sourceBuffer.buffered.length > 0) {
-                    try {
-                      const endTime = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1)
-                      sourceBuffer.remove(0, Math.max(0, endTime - 10)) // Keep last 10 seconds
-                      console.log(`${streamType}: Removed old data due to quota exceeded`)
-                      // Retry append after removal completes
-                      const retryReady = await waitForSourceBuffer()
-                      if (retryReady && mediaSource.readyState === 'open') {
-                        sourceBuffer.appendBuffer(arrayBuffer)
-                        await waitForSourceBuffer()
-                        successCount++
-                        errorCount-- // Decrement since we recovered
-                        console.log(`✅ Appended ${streamType} chunk ${chunk.chunkIndex || i} after quota fix`)
-                      } else {
-                        console.warn(`${streamType}: Cannot retry append - MediaSource not ready`)
-                        break
-                      }
-                    } catch (removeError) {
-                      console.error(`${streamType}: Error removing old data:`, removeError)
-                      // Continue instead of break - try next chunk
-                      continue
-                    }
-                  } else {
-                    // For other errors, skip this chunk but continue if MediaSource is still open
-                    if (mediaSource.readyState === 'open') {
-                      continue
-                    } else {
-                      console.warn(`${streamType}: MediaSource closed due to append error - stopping`)
-                      break
-                    }
-                  }
-                }
-              } catch (error) {
-                console.error(`❌ Error loading ${streamType} chunk ${chunk.chunkIndex || i}:`, error)
-                errorCount++
-                // Continue with next chunk
-              }
-            }
-            
-            // Log final summary
-            console.log(`\n📊 ${streamType} loading complete:`)
-            console.log(`   Total chunks: ${streamChunks.length}`)
-            console.log(`   Successfully appended: ${successCount}`)
-            console.log(`   Skipped: ${skippedCount}`)
-            console.log(`   Errors: ${errorCount}`)
-            console.log(`   MediaSource state: ${mediaSource.readyState}`)
-
-            // Determine if we should use sequential playback fallback
-            // Use sequential playback if:
-            // 1. MediaSource failed to load most chunks (< 50% success rate)
-            // 2. MediaSource closed prematurely
-            // 3. Less than 3 chunks were successfully loaded
-            const shouldUseSequentialPlayback = 
-              mediaSource.readyState !== 'open' || 
-              successCount < Math.min(3, streamChunks.length) ||
-              (successCount / streamChunks.length) < 0.5
-
-            // Check if we have enough chunks to play
-            if (successCount === 0) {
-              console.error(`❌ ${streamType}: No chunks were successfully loaded. Cannot play video.`)
-              console.error(`   This may be due to:`)
-              console.error(`   - Files not existing at the corrected URLs (database inconsistency)`)
-              console.error(`   - Network errors`)
-              console.error(`   - Codec issues`)
-              console.error(`   - Missing files in storage`)
-              console.error(`   - Files may have different timestamps than what's stored in database`)
-              
-              // Clean up MediaSource
-              try {
-                if (mediaSource.readyState === 'open') {
-                  mediaSource.endOfStream()
-                }
-                URL.revokeObjectURL(video.src)
-              } catch (e) {
-                // Ignore cleanup errors
-              }
-              return
-            }
-            
-            if (shouldUseSequentialPlayback && successCount < streamChunks.length) {
-              console.warn(`⚠️ ${streamType}: MediaSource only loaded ${successCount}/${streamChunks.length} chunks`)
-              
-              if (successCount > 0) {
-                console.warn(`   Will attempt to play with ${successCount} available chunks`)
-                console.warn(`   Video may be incomplete or have gaps`)
-                // Continue to end stream and play what we have
-              } else {
-                // No chunks loaded - can't play
-                console.error(`❌ ${streamType}: No chunks loaded. Video cannot be played.`)
-              return
-              }
-            }
-
-            // Close the stream only if we successfully appended at least one chunk
-            if (successCount > 0 && !isCleaningUp) {
-              const isReady = await waitForSourceBuffer()
-              if (isReady && mediaSource.readyState === 'open') {
-                try {
-                  mediaSource.endOfStream()
-                  console.log(`✅ ${streamType}: Stream ended successfully`)
-                  console.log(`   Appended ${successCount}/${streamChunks.length} chunks`)
-                  
-                  if (successCount < streamChunks.length) {
-                    console.warn(`⚠️ ${streamType}: Only ${successCount} of ${streamChunks.length} chunks were appended!`)
-                    console.warn(`   This may result in shorter playback duration.`)
-                  }
-
-                  // Check video duration
-                  if (sourceBuffer && sourceBuffer.buffered.length > 0) {
-                    const start = sourceBuffer.buffered.start(0)
-                    const end = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1)
-                    const duration = end - start
-                    console.log(`📹 ${streamType}: Buffered duration: ${duration.toFixed(2)} seconds`)
-                  }
-
-                  // Try to play
-                  video.play().catch((e) => {
-                    if (e.name !== 'NotAllowedError') {
-                      console.warn(`${streamType}: Failed to auto-play:`, e)
-                    }
-                  })
-                } catch (endError) {
-                  console.warn(`${streamType}: Error ending stream:`, endError)
-                  console.warn(`   Video may not play correctly`)
-                }
-              } else {
-                console.warn(`${streamType}: Cannot end stream - MediaSource state: ${mediaSource.readyState}`)
-                console.warn(`   Only ${successCount}/${streamChunks.length} chunks were appended before MediaSource closed`)
-                if (successCount === 0) {
-                  console.error(`❌ ${streamType}: No chunks loaded. Video cannot be played.`)
-                }
-              }
-            } else {
-              console.warn(`${streamType}: No chunks were successfully appended (success: ${successCount}, errors: ${errorCount}, skipped: ${skippedCount})`)
-              console.error(`❌ ${streamType}: Video cannot be played without any loaded chunks`)
-            }
-          } catch (error) {
-            console.error(`❌ Error initializing ${streamType} player:`, error)
-            if (mediaSource.readyState === 'open') {
-              try {
-                mediaSource.endOfStream()
-              } catch (e) {
-                // Ignore errors when ending stream after error
-              }
-            }
-            // MediaSource initialization failed - cannot play video
-            console.error(`❌ ${streamType}: MediaSource initialization failed. Video cannot be played.`)
-            console.error(`   MediaSource fragments cannot be played as standalone videos`)
-            console.error(`   They must be loaded into a MediaSource buffer`)
-            try {
-              URL.revokeObjectURL(video.src)
-            } catch (e) {
-              // Ignore
-            }
+            const buf = await r.arrayBuffer()
+            if (!cancelled) setLoading(prev => prev ? { ...prev, done: prev.done + 1 } : null)
+            return buf
+          } catch (e) {
+            console.warn(`${streamType}: failed to fetch chunk ${chunk.chunkIndex}:`, e)
+            return null
           }
         })
+      )
 
-        mediaSource.addEventListener('error', (e) => {
-          console.error(`❌ ${streamType}: MediaSource error:`, e)
-          console.error(`   ReadyState: ${mediaSource.readyState}`)
-          console.error(`   SourceBuffers: ${mediaSource.sourceBuffers.length}`)
-          if (video.error) {
-            console.error(`   Video error:`, {
-              code: video.error.code,
-              message: video.error.message
-            })
-          }
-        })
+      if (cancelled) return
 
-        mediaSource.addEventListener('sourceended', () => {
-          console.log(`✅ ${streamType}: MediaSource ended (normal closure)`)
-        })
+      const valid = buffers.filter(Boolean) as ArrayBuffer[]
+      if (valid.length === 0) { setLoading(null); return }
 
-        mediaSource.addEventListener('sourceclose', () => {
-          console.warn(`⚠️ ${streamType}: MediaSource closed unexpectedly`)
-          console.warn(`   ReadyState before close: ${mediaSource.readyState}`)
-          console.warn(`   SourceBuffers count: ${mediaSource.sourceBuffers.length}`)
-          if (video.error) {
-            console.warn(`   Video error:`, {
-              code: video.error.code,
-              message: video.error.message
-            })
-          }
-        })
-      } catch (error) {
-        console.error(`❌ Error creating MediaSource for ${streamType}:`, error)
-        console.error(`   MediaSource is required for playing video chunks`)
-        console.error(`   Video cannot be played without MediaSource support`)
+      // Concatenate all valid buffers into a single contiguous WebM file
+      const totalBytes = valid.reduce((s, b) => s + b.byteLength, 0)
+      const merged = new Uint8Array(totalBytes)
+      let offset = 0
+      for (const buf of valid) {
+        merged.set(new Uint8Array(buf), offset)
+        offset += buf.byteLength
       }
+
+      const blob = new Blob([merged], { type: 'video/webm' })
+      const newUrl = URL.createObjectURL(blob)
+      console.log(`✅ ${streamType}: created blob (${(totalBytes / 1024 / 1024).toFixed(1)} MB) from ${valid.length}/${chunks.length} chunks`)
+
+      // Revoke old blob URL for this stream before setting the new one
+      const oldRef = streamType === 'webcam' ? webcamBlobRef : screenshareBlobRef
+      if (oldRef.current) { URL.revokeObjectURL(oldRef.current) }
+      oldRef.current = newUrl
+
+      setBlobUrl(newUrl)
+      setLoading(null)
     }
 
-    // Initialize both players
-    initializeVideoPlayer(normalizedVideoChunks, webcamVideoRef, 'webcam')
-    initializeVideoPlayer(normalizedVideoChunks, screenshareVideoRef, 'screenshare')
+    loadStream('webcam', setWebcamLoading, setWebcamBlobUrl)
+    loadStream('screenshare', setScreenshareLoading, setScreenshareBlobUrl)
 
-    // Cleanup function
     return () => {
-      isCleaningUp = true
-      
-      // End MediaSources if they're still open
-      if (webcamMediaSource && webcamMediaSource.readyState === 'open') {
-        try {
-          webcamMediaSource.endOfStream()
-        } catch (e) {
-          // Ignore errors
-        }
-      }
-      if (screenshareMediaSource && screenshareMediaSource.readyState === 'open') {
-        try {
-          screenshareMediaSource.endOfStream()
-        } catch (e) {
-          // Ignore errors
-        }
-      }
-      
-      // Clean up blob URLs
-      if (webcamVideoRef.current?.src && webcamVideoRef.current.src.startsWith('blob:')) {
-        URL.revokeObjectURL(webcamVideoRef.current.src)
-        webcamVideoRef.current.src = ''
-      }
-      if (screenshareVideoRef.current?.src && screenshareVideoRef.current.src.startsWith('blob:')) {
-        URL.revokeObjectURL(screenshareVideoRef.current.src)
-        screenshareVideoRef.current.src = ''
-      }
+      cancelled = true
     }
   }, [activeTab, normalizedVideoChunks])
 
+  // Revoke blob URLs only on true component unmount (empty deps = runs once)
+  useEffect(() => {
+    return () => {
+      if (webcamBlobRef.current) URL.revokeObjectURL(webcamBlobRef.current)
+      if (screenshareBlobRef.current) URL.revokeObjectURL(screenshareBlobRef.current)
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleDownloadReport = () => {
-    // TODO: Generate and download PDF report
-    console.log("Downloading report...")
+    const sessionId = session?.id;
+    if (sessionId) router.push(`/dashboard/report/${sessionId}`);
   }
+
+  // Chat message count
+  const chatCount = aiInteractions.filter(i => i.promptText || i.responseText || i.eventType === 'prompt_sent' || i.eventType === 'response_received').length
 
   return (
     <div className="space-y-6">
       {/* Tabs */}
-      <div className="border-b border-zinc-800">
-        <div className="flex gap-2">
+      <div className="border-b border-border">
+        <div className="flex gap-1 overflow-x-auto">
           <button
             onClick={() => setActiveTab('overview')}
-            className={`px-4 py-2 text-sm font-medium transition-colors ${
+            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
               activeTab === 'overview'
-                ? 'text-white border-b-2 border-white'
-                : 'text-zinc-400 hover:text-white'
+                ? 'text-foreground border-b-2 border-foreground'
+                : 'text-muted-foreground hover:text-foreground'
             }`}
           >
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h8" /></svg>
             Overview
           </button>
-          {/* Submissions Tab - Only show for coding challenges */}
-          {isCodingChallenge && (
+          {/* Submissions Tab - Only show for leetcode-style */}
+          {isLeetcodeStyle && (
             <button
               onClick={() => setActiveTab('submissions')}
-              className={`px-4 py-2 text-sm font-medium transition-colors ${
+              className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
                 activeTab === 'submissions'
-                  ? 'text-white border-b-2 border-white'
-                  : 'text-zinc-400 hover:text-white'
+                  ? 'text-foreground border-b-2 border-foreground'
+                  : 'text-muted-foreground hover:text-foreground'
               }`}
             >
-              Submissions ({filteredSubmissions.length})
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+              Submissions {filteredSubmissions.length > 0 && <span className="rounded-full bg-muted px-1.5 text-[10px]">{filteredSubmissions.length}</span>}
             </button>
           )}
           {/* Chat History Tab - Show full conversation */}
           <button
             onClick={() => setActiveTab('chat-history')}
-            className={`px-4 py-2 text-sm font-medium transition-colors ${
+            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
               activeTab === 'chat-history'
-                ? 'text-white border-b-2 border-white'
-                : 'text-zinc-400 hover:text-white'
+                ? 'text-foreground border-b-2 border-foreground'
+                : 'text-muted-foreground hover:text-foreground'
             }`}
           >
-            Chat History {aiInteractions.length > 0 && `(${aiInteractions.length})`}
+            <MessageSquare className="h-3.5 w-3.5" />
+            Chat History {chatCount > 0 && <span className="rounded-full bg-muted px-1.5 text-[10px]">{chatCount}</span>}
           </button>
           {/* Agent Insights Tab - Only for recruiters, shows detailed agent analysis */}
           {!isCandidateView && agentInsights && (
             <button
               onClick={() => setActiveTab('agent-insights')}
-              className={`px-4 py-2 text-sm font-medium transition-colors ${
+              className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
                 activeTab === 'agent-insights'
-                  ? 'text-white border-b-2 border-white'
-                  : 'text-zinc-400 hover:text-white'
+                  ? 'text-foreground border-b-2 border-foreground'
+                  : 'text-muted-foreground hover:text-foreground'
               }`}
             >
+              <Bot className="h-3.5 w-3.5" />
               Agent Insights
             </button>
           )}
@@ -1012,266 +378,410 @@ export function SessionDetailView({
           {isCandidateView && agentInsights && (
             <button
               onClick={() => setActiveTab('my-insights')}
-              className={`px-4 py-2 text-sm font-medium transition-colors ${
+              className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
                 activeTab === 'my-insights'
-                  ? 'text-white border-b-2 border-white'
-                  : 'text-zinc-400 hover:text-white'
+                  ? 'text-foreground border-b-2 border-foreground'
+                  : 'text-muted-foreground hover:text-foreground'
               }`}
             >
+              <Bot className="h-3.5 w-3.5" />
               My Insights
+            </button>
+          )}
+          {/* Code Tab — shows candidate's final workspace files (IDE challenge sessions) */}
+          {!isCandidateView && session?.finalCode && (
+            <button
+              onClick={() => setActiveTab('code')}
+              className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
+                activeTab === 'code'
+                  ? 'text-foreground border-b-2 border-foreground'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Code className="h-3.5 w-3.5" />
+              Code {parsedFiles ? `(${Object.keys(parsedFiles).length} files)` : ''}
             </button>
           )}
           {/* Recordings Tab - Only for recruiter assessments */}
           {!isCandidateView && (
           <button
             onClick={() => setActiveTab('recordings')}
-            className={`px-4 py-2 text-sm font-medium transition-colors ${
+            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
               activeTab === 'recordings'
-                ? 'text-white border-b-2 border-white'
-                : 'text-zinc-400 hover:text-white'
+                ? 'text-foreground border-b-2 border-foreground'
+                : 'text-muted-foreground hover:text-foreground'
             }`}
           >
-            Recordings {normalizedVideoChunks.length > 0 && `(${normalizedVideoChunks.length})`}
+            <Video className="h-3.5 w-3.5" />
+            Recordings {normalizedVideoChunks.length > 0 && (() => {
+              const streamCount = [
+                normalizedVideoChunks.some(c => c.streamType === 'webcam'),
+                normalizedVideoChunks.some(c => c.streamType === 'screenshare')
+              ].filter(Boolean).length || 1
+              return <span className="rounded-full bg-muted px-1.5 text-[10px]">{streamCount}</span>
+            })()}
           </button>
           )}
         </div>
       </div>
 
       {/* Overview Tab */}
-      {activeTab === 'overview' && (
-        <div className="space-y-6">
-          {/* Score Overview */}
-          <Card className="border-zinc-800 bg-zinc-950">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-2xl text-white">Assessment Score</CardTitle>
-                <Button onClick={handleDownloadReport} className="gap-2 bg-white text-black hover:bg-zinc-200">
-                  <Download className="h-4 w-4" />
-                  Download Report
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="mb-6 flex items-center justify-between">
+      {activeTab === 'overview' && (() => {
+        // ── derived helpers ──────────────────────────────────────────────────
+        const durationMs = session.startedAt && session.endedAt
+          ? new Date(session.endedAt).getTime() - new Date(session.startedAt).getTime()
+          : null
+        const durationFmt = durationMs != null
+          ? `${Math.floor(durationMs / 60000)}:${String(Math.floor((durationMs % 60000) / 1000)).padStart(2, '0')}`
+          : '—'
+        const submittedFmt = session.endedAt
+          ? new Date(session.endedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+          : '—'
+
+        const metrics   = agentInsights?.metrics
+        const judge     = agentInsights?.judge
+        const sanity    = agentInsights?.sanity
+        const extractor = agentInsights?.extractor
+        const watcher   = agentInsights?.watcher
+
+        // tab-switch violations count (prefer watcher timeline tab events, fall back to violations prop)
+        const tabSwitchCount = violations.length
+
+        // Integrity status
+        const redFlagCount  = sanity?.redFlags?.length ?? 0
+        const isVerified    = redFlagCount === 0
+
+        // Summary text (judge > extractor > nothing)
+        const summaryText = judge?.candidate_fit_summary || judge?.ai_usage_narrative || extractor?.analysisExplanation || null
+
+        // KEY FINDINGS — derive up to 3 from judge strengths/weaknesses + integrity
+        type Finding = { type: 'strength'|'concern'|'integrity'; title: string; body: string }
+        const findings: Finding[] = []
+        if (judge?.strengths?.length) {
+          const s = judge.strengths[0]
+          findings.push({ type: 'strength', title: typeof s === 'string' ? s : s.title || 'Strength', body: typeof s === 'string' ? '' : (s.description || '') })
+        }
+        if (judge?.weaknesses?.length) {
+          const w = judge.weaknesses[0]
+          findings.push({ type: 'concern', title: typeof w === 'string' ? w : w.title || 'Concern', body: typeof w === 'string' ? '' : (w.description || '') })
+        }
+        // Always add integrity finding
+        findings.push({
+          type: 'integrity',
+          title: isVerified ? 'Original work, no flags' : `${redFlagCount} flag${redFlagCount !== 1 ? 's' : ''} detected`,
+          body: isVerified
+            ? `No plagiarism, anomalies or red flags detected${watcher?.timeline?.length ? ` across ${watcher.timeline.length} timeline events` : ''}. Single-session, focused work.`
+            : `${redFlagCount} red flag${redFlagCount !== 1 ? 's' : ''} found during analysis.`
+        })
+
+        // Evidence items
+        const tools = session.toolResources as Record<string, { url: string; viewUrl?: string }> | null
+        const docsEntry = tools?.docs ?? (session.docsFileUrl ? { url: session.docsFileUrl, viewUrl: session.docsFileUrl?.replace(/\/edit.*$/, '/preview') } : null)
+
+        // Agent verdict scores
+        const watcherScore   = watcher?.riskScore ?? riskScore ?? null
+        const analyzerScore  = extractor?.behaviorScore ?? extractor?.overallScore ?? null
+        const riskAgentScore = sanity?.riskScore ?? null
+
+        const findingBadgeClass = (type: Finding['type']) => {
+          if (type === 'strength')  return 'bg-emerald-500/15 text-emerald-400 border-emerald-500/20'
+          if (type === 'concern')   return 'bg-amber-500/15 text-amber-400 border-amber-500/20'
+          return 'bg-teal-500/15 text-teal-400 border-teal-500/20'
+        }
+        const findingIconClass = (type: Finding['type']) => {
+          if (type === 'strength')  return 'bg-emerald-500/15 text-emerald-400'
+          if (type === 'concern')   return 'bg-amber-500/15 text-amber-400'
+          return 'bg-teal-500/15 text-teal-400'
+        }
+        const findingIcon = (type: Finding['type']) => {
+          if (type === 'strength')  return <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+          if (type === 'concern')   return <AlertTriangle className="h-4 w-4" />
+          return <CheckCircle className="h-4 w-4" />
+        }
+
+        const agentIcon = (type: 'watcher'|'analyzer'|'risk') => {
+          if (type === 'watcher')  return <Monitor className="h-4 w-4" />
+          if (type === 'analyzer') return <Code className="h-4 w-4" />
+          return <AlertTriangle className="h-4 w-4" />
+        }
+        const agentScoreColor = (score: number | null, invert = false) => {
+          if (score == null) return 'text-muted-foreground'
+          if (invert) {
+            // lower = better (risk score)
+            if (score <= 20) return 'text-emerald-400'
+            if (score <= 50) return 'text-amber-400'
+            return 'text-red-400'
+          }
+          if (score >= 70) return 'text-emerald-400'
+          if (score >= 40) return 'text-amber-400'
+          return 'text-red-400'
+        }
+
+        return (
+          <div className="space-y-6">
+
+            {/* ── ASSESSMENT RESULT card ─────────────────────────────────── */}
+            <div className="rounded-2xl border border-border bg-card/40 p-8">
+              <div className="flex items-start justify-between mb-6">
                 <div>
-                  <p className="text-5xl font-bold text-white">{percentageScore}%</p>
-                  <p className="mt-2 text-zinc-400">
-                    {totalScore} out of {maxScore} points
+                  <p className="text-xs font-semibold tracking-[0.14em] text-muted-foreground/70 mb-1">ASSESSMENT RESULT</p>
+                  <p className="text-sm text-muted-foreground">
+                    {isIdeSession ? 'AI-assessed behaviour & integrity score' : 'Points-based coding score'}
                   </p>
                 </div>
-                <div>
-                  {passed ? (
-                    <Badge className="bg-green-500/10 px-4 py-2 text-lg text-green-500">
-                      <CheckCircle className="mr-2 h-5 w-5" />
-                      Passed
-                    </Badge>
-                  ) : (
-                    <Badge className="bg-red-500/10 px-4 py-2 text-lg text-red-500">
-                      <AlertTriangle className="mr-2 h-5 w-5" />
-                      Failed
-                    </Badge>
-                  )}
+                {!isPendingAnalysis && (
+                  <div className={`flex items-center gap-2 rounded-full border px-3 py-1 text-xs ${
+                    passed
+                      ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                      : 'bg-red-500/10 border-red-500/20 text-red-400'
+                  }`}>
+                    <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                    {passed ? 'Above threshold' : 'Below threshold'} · pass at 70 %
+                  </div>
+                )}
+              </div>
+
+              {/* Giant score */}
+              <div className="mb-8">
+                <span className="text-[96px] font-bold leading-none text-foreground tracking-tight">{percentageScore}</span>
+                <span className="text-4xl text-muted-foreground ml-1">%</span>
+              </div>
+
+              {/* Gradient progress bar with PASS marker */}
+              <div className="relative mb-8">
+                <div className="h-2 rounded-full bg-muted overflow-visible relative">
+                  <div
+                    className="h-full rounded-full"
+                    style={{ width: `${percentageScore}%`, background: 'linear-gradient(to right, #7c3aed, #a78bfa)' }}
+                  />
+                </div>
+                {/* PASS marker at 70% */}
+                <div className="absolute top-0" style={{ left: '70%' }}>
+                  <div className="h-2 w-px bg-muted-foreground/60" />
+                  <span className="absolute top-4 left-1/2 -translate-x-1/2 text-[10px] font-semibold tracking-[0.1em] text-muted-foreground/60">PASS</span>
                 </div>
               </div>
-              <Progress value={percentageScore} className="h-3" />
-            </CardContent>
-          </Card>
 
-          {/* Session Info */}
-          <div className="grid md:grid-cols-3 gap-4">
-            <Card className="border-zinc-800 bg-zinc-950">
-              <CardContent className="p-4">
-                <div className="text-zinc-400 text-xs mb-1 flex items-center gap-2">
-                  <Code className="h-3.5 w-3.5" />
-                  Session Code
+              {/* Summary text */}
+              {summaryText && (
+                <p className="text-sm text-muted-foreground leading-relaxed">{summaryText}</p>
+              )}
+            </div>
+
+            {/* ── 4 STAT CARDS ──────────────────────────────────────────── */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {/* Duration */}
+              <div className="rounded-xl border border-border bg-card/40 p-5">
+                <p className="text-[10px] font-semibold tracking-[0.14em] text-muted-foreground/60 mb-3">DURATION</p>
+                <p className="text-2xl font-bold text-foreground">{durationFmt}</p>
+                <p className="text-xs text-muted-foreground mt-1">Submitted {submittedFmt}</p>
+              </div>
+
+              {/* AI Prompts */}
+              <div className="rounded-xl border border-border bg-card/40 p-5">
+                <p className="text-[10px] font-semibold tracking-[0.14em] text-muted-foreground/60 mb-3">AI PROMPTS</p>
+                <p className="text-2xl font-bold text-foreground">{metrics?.promptCount ?? '—'}</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {[
+                    metrics?.modelSwitches != null ? `${metrics.modelSwitches + 1} models` : null,
+                    metrics?.totalTokens != null ? `${metrics.totalTokens.toLocaleString()} tokens` : null
+                  ].filter(Boolean).join(' · ') || 'No AI usage'}
+                </p>
+              </div>
+
+              {/* Tab Switches */}
+              <div className="rounded-xl border border-border bg-card/40 p-5">
+                <p className="text-[10px] font-semibold tracking-[0.14em] text-muted-foreground/60 mb-3">TAB SWITCHES</p>
+                <p className="text-2xl font-bold text-foreground">{tabSwitchCount}</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {tabSwitchCount === 0 ? 'Stayed in assessment' : 'Left assessment'}
+                </p>
+              </div>
+
+              {/* Integrity */}
+              <div className="rounded-xl border border-border bg-card/40 p-5">
+                <p className="text-[10px] font-semibold tracking-[0.14em] text-muted-foreground/60 mb-3">INTEGRITY</p>
+                {sanity ? (
+                  <>
+                    <p className={`text-2xl font-bold flex items-center gap-2 ${isVerified ? 'text-emerald-400' : 'text-amber-400'}`}>
+                      <span className="h-2 w-2 rounded-full bg-current flex-shrink-0" />
+                      {isVerified ? 'Verified' : 'Flagged'}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">{isVerified ? 'No flags raised' : `${redFlagCount} flag${redFlagCount !== 1 ? 's' : ''} raised`}</p>
+                  </>
+                ) : (
+                  <p className="text-2xl font-bold text-muted-foreground">—</p>
+                )}
+              </div>
+            </div>
+
+            {/* ── KEY FINDINGS ──────────────────────────────────────────── */}
+            {!isCandidateView && findings.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs font-semibold tracking-[0.14em] text-foreground">KEY FINDINGS</p>
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{findings.length}</span>
+                  </div>
+                  <button
+                    onClick={() => setActiveTab('agent-insights')}
+                    className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+                  >
+                    See full agent breakdown <span aria-hidden>→</span>
+                  </button>
                 </div>
-                <div className="text-emerald-400 font-mono text-sm">{session.sessionCode || session.session_code || 'N/A'}</div>
-              </CardContent>
-            </Card>
-            <Card className="border-zinc-800 bg-zinc-950">
-              <CardContent className="p-4">
-                <div className="text-zinc-400 text-xs mb-1 flex items-center gap-2">
-                  <User className="h-3.5 w-3.5" />
-                  Candidate
-                </div>
-                <div className="text-white text-sm">{session.candidateName || session.candidate_name || 'N/A'}</div>
-              </CardContent>
-            </Card>
-            <Card className="border-zinc-800 bg-zinc-950">
-              <CardContent className="p-4">
-                <div className="text-zinc-400 text-xs mb-1 flex items-center gap-2">
-                  <CheckCircle className="h-3.5 w-3.5" />
-                  Status
-                </div>
-                <div className="text-white text-sm capitalize">{session.status}</div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Agent Analysis Summary - Consolidated view with scores and metrics */}
-          {!isCandidateView && agentInsights && (
-            <Card className="border-zinc-800 bg-zinc-950">
-              <CardHeader>
-                <CardTitle className="text-white text-lg">Agent Analysis Summary</CardTitle>
-              </CardHeader>
-              <CardContent>
-            <div className="grid md:grid-cols-3 gap-4">
-                  {/* Agent 6: Watcher - Combined view */}
-                  {agentInsights.watcher && (
-                    <div className="p-4 rounded-lg bg-blue-500/10 border border-blue-500/30">
-                      <div className="flex items-center gap-2 mb-3">
-                        <Monitor className="h-4 w-4 text-blue-400" />
-                        <span className="text-sm font-semibold text-white">Agent 6: Watcher</span>
-                    </div>
-                      {riskScore !== null && (
-                        <div className="mb-3">
-                          <div className="flex items-baseline gap-2 mb-1">
-                    <span className={`text-2xl font-bold ${
-                      riskScore >= 70 ? 'text-red-400' :
-                      riskScore >= 40 ? 'text-amber-400' :
-                      'text-emerald-400'
-                    }`}>
-                      {riskScore}/100
-                    </span>
-                            <span className="text-xs text-zinc-500">Risk Score</span>
-                    </div>
-                          <Progress value={riskScore} className="h-2" />
-                    </div>
-                      )}
-                      <div className="space-y-1 text-xs text-zinc-400 border-t border-zinc-800 pt-2">
-                        {agentInsights.watcher.alerts && (
-                          <p>Alerts: {agentInsights.watcher.alerts.length}</p>
-                        )}
-                        {agentInsights.watcher.violations && (
-                          <p>Violations: {agentInsights.watcher.violations.length}</p>
-                        )}
-                        {agentInsights.watcher.timeline && (
-                          <p>Timeline Events: {agentInsights.watcher.timeline.length}</p>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Agent 7: Analyzer - Combined view */}
-                  {agentInsights.extractor && (
-                    <div className="p-4 rounded-lg bg-purple-500/10 border border-purple-500/30">
-                      <div className="flex items-center gap-2 mb-3">
-                        <Code className="h-4 w-4 text-purple-400" />
-                        <span className="text-sm font-semibold text-white">Agent 7: Analyzer</span>
-                      </div>
-                      {agentInsights.extractor.behaviorScore !== undefined && (
-                        <div className="mb-3">
-                          <div className="flex items-baseline gap-2 mb-1">
-                            <span className={`text-2xl font-bold ${
-                              agentInsights.extractor.behaviorScore >= 70 ? 'text-emerald-400' :
-                              agentInsights.extractor.behaviorScore >= 40 ? 'text-amber-400' :
-                              'text-red-400'
-                            }`}>
-                              {agentInsights.extractor.behaviorScore}/100
-                            </span>
-                            <span className="text-xs text-zinc-500">Behavior Score</span>
-                          </div>
-                          <Progress value={agentInsights.extractor.behaviorScore} className="h-2" />
-                        </div>
-                      )}
-                      <div className="space-y-1 text-xs text-zinc-400 border-t border-zinc-800 pt-2">
-                        {agentInsights.extractor.codeQuality && (
-                          <p>Lines: {agentInsights.extractor.codeQuality.totalLines || 'N/A'}</p>
-                        )}
-                        {agentInsights.extractor.codeIntegration && (
-                          <p>Modifications: {agentInsights.extractor.codeIntegration.modifications || 0}</p>
-                        )}
-                        {agentInsights.extractor.patterns && (
-                          <p>Patterns Detected: {
-                            (agentInsights.extractor.patterns.copyPastePatterns?.length || 0) +
-                            (agentInsights.extractor.patterns.timingPatterns ? 1 : 0) +
-                            (agentInsights.extractor.patterns.promptPatterns ? 1 : 0)
-                          }</p>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Agent 8: Risk Assessor - Combined view */}
-                  {agentInsights.sanity && (
-                    <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/30">
-                      <div className="flex items-center gap-2 mb-3">
-                        <AlertTriangle className="h-4 w-4 text-red-400" />
-                        <span className="text-sm font-semibold text-white">Agent 8: Risk Assessor</span>
+                <div className="grid md:grid-cols-3 gap-4">
+                  {findings.map((f, i) => (
+                    <div key={i} className="rounded-xl border border-border bg-card/40 p-5">
+                      <div className={`mb-3 inline-flex h-8 w-8 items-center justify-center rounded-lg ${findingIconClass(f.type)}`}>
+                        {findingIcon(f.type)}
                       </div>
                       <div className="mb-3">
-                        <div className="flex items-baseline gap-2 mb-1">
-                          <span className={`text-2xl font-bold ${
-                            (agentInsights.sanity.redFlags?.length || 0) > 5 ? 'text-red-400' :
-                            (agentInsights.sanity.redFlags?.length || 0) > 2 ? 'text-amber-400' :
-                            'text-emerald-400'
-                          }`}>
-                            {agentInsights.sanity.redFlags?.length || 0}
-                          </span>
-                          <span className="text-xs text-zinc-500">Red Flags</span>
-                        </div>
-                        {agentInsights.sanity.riskScore !== undefined && (
-                          <p className="text-xs text-zinc-500">
-                            Risk: {agentInsights.sanity.riskScore}/100
-                          </p>
-                        )}
+                        <span className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-bold tracking-[0.12em] ${findingBadgeClass(f.type)}`}>
+                          {f.type.toUpperCase()}
+                        </span>
                       </div>
-                      <div className="space-y-1 text-xs text-zinc-400 border-t border-zinc-800 pt-2">
-                        {agentInsights.sanity.anomalies && (
-                          <p>Anomalies: {agentInsights.sanity.anomalies.length}</p>
-                        )}
-                        {agentInsights.sanity.sanityChecks && (
-                          <p>Checks: {Object.keys(agentInsights.sanity.sanityChecks).length}</p>
-                        )}
+                      <p className="text-sm font-semibold text-foreground mb-1">{f.title}</p>
+                      {f.body && <p className="text-xs text-muted-foreground leading-relaxed">{f.body}</p>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── REVIEW THE EVIDENCE ───────────────────────────────────── */}
+            <div>
+              <p className="text-xs font-semibold tracking-[0.14em] text-foreground mb-4">REVIEW THE EVIDENCE</p>
+              <div className="grid md:grid-cols-3 gap-4">
+                {/* Watch Recording */}
+                {!isCandidateView && normalizedVideoChunks.length > 0 && (
+                  <button
+                    onClick={() => setActiveTab('recordings')}
+                    className="flex items-center justify-between rounded-xl border border-border bg-card/40 p-5 text-left hover:bg-card/60 transition-colors group"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-muted">
+                        <Video className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">Watch Recording</p>
+                        <p className="text-xs text-muted-foreground">Webcam + screen share · {durationFmt}</p>
                       </div>
                     </div>
-                  )}
-                </div>
-                <Button
-                  onClick={() => setActiveTab('agent-insights')}
-                  className="mt-4 w-full bg-zinc-800 text-white hover:bg-zinc-700"
-                >
-                  View Detailed Agent Insights
-                </Button>
-              </CardContent>
-            </Card>
-          )}
+                    <span className="text-muted-foreground group-hover:text-foreground transition-colors">→</span>
+                  </button>
+                )}
 
-          {/* Legacy Risk Score - Fallback if no agent insights */}
-          {riskScore !== null && !isCandidateView && !agentInsights && (
-            <Card className={`border ${
-              riskScore >= 70 ? 'border-red-500/30 bg-red-500/10' :
-              riskScore >= 40 ? 'border-amber-500/30 bg-amber-500/10' :
-              'border-emerald-500/30 bg-emerald-500/10'
-            }`}>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2">
-                  <AlertTriangle className={`h-4 w-4 ${
-                    riskScore >= 70 ? 'text-red-400' :
-                    riskScore >= 40 ? 'text-amber-400' :
-                    'text-emerald-400'
-                  }`} />
-                  <span className="text-sm font-semibold text-white">Risk Score:</span>
-                  <span className={`text-lg font-bold ${
-                    riskScore >= 70 ? 'text-red-400' :
-                    riskScore >= 40 ? 'text-amber-400' :
-                    'text-emerald-400'
-                  }`}>
-                    {riskScore}/100
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </div>
-      )}
+                {/* Read AI Chat */}
+                {aiInteractions.filter(i => i.promptText || i.responseText).length > 0 && (
+                  <button
+                    onClick={() => setActiveTab('chat-history')}
+                    className="flex items-center justify-between rounded-xl border border-border bg-card/40 p-5 text-left hover:bg-card/60 transition-colors group"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-muted">
+                        <MessageSquare className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">Read AI Chat</p>
+                        <p className="text-xs text-muted-foreground">{aiInteractions.filter(i => i.promptText || i.responseText).length} messages exchanged with AI</p>
+                      </div>
+                    </div>
+                    <span className="text-muted-foreground group-hover:text-foreground transition-colors">→</span>
+                  </button>
+                )}
 
-      {/* Submissions Tab - Only for coding challenges */}
-      {activeTab === 'submissions' && isCodingChallenge && (
+                {/* View Submitted Doc */}
+                {!isCandidateView && docsEntry && (
+                  <a
+                    href={docsEntry.viewUrl || docsEntry.url.replace(/\/edit.*$/, '/preview')}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-between rounded-xl border border-border bg-card/40 p-5 text-left hover:bg-card/60 transition-colors group"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-muted">
+                        <FileText className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">View Submitted Doc</p>
+                        <p className="text-xs text-muted-foreground">Read-only · locked at submit</p>
+                      </div>
+                    </div>
+                    <ExternalLink className="h-3.5 w-3.5 text-muted-foreground group-hover:text-foreground transition-colors" />
+                  </a>
+                )}
+              </div>
+            </div>
+
+            {/* ── AI AGENT VERDICTS ─────────────────────────────────────── */}
+            {!isCandidateView && agentInsights && (
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs font-semibold tracking-[0.14em] text-foreground">AI AGENT VERDICTS</p>
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">3 agents</span>
+                  </div>
+                  <button
+                    onClick={() => setActiveTab('agent-insights')}
+                    className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    View detailed analysis →
+                  </button>
+                </div>
+                <div className="rounded-2xl border border-border bg-card/40 p-6">
+                  <div className="grid md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-border gap-6 md:gap-0">
+                    {/* Agent 6: Watcher */}
+                    <div className="md:pr-6">
+                      <p className="text-[10px] text-muted-foreground/60 mb-1">Agent 6</p>
+                      <p className="text-sm font-semibold text-foreground mb-3">Watcher</p>
+                      <p className={`text-3xl font-bold ${agentScoreColor(watcherScore, true)}`}>
+                        {watcherScore ?? '—'}<span className="text-base text-muted-foreground font-normal"> /100</span>
+                      </p>
+                      <p className={`text-xs mt-1 ${agentScoreColor(watcherScore, true)}`}>
+                        {watcherScore == null ? '—' : watcherScore <= 20 ? 'No risk detected' : watcherScore <= 50 ? 'Some risk' : 'High risk'}
+                      </p>
+                    </div>
+                    {/* Agent 7: Analyzer */}
+                    <div className="md:px-6 pt-4 md:pt-0">
+                      <p className="text-[10px] text-muted-foreground/60 mb-1">Agent 7</p>
+                      <p className="text-sm font-semibold text-foreground mb-3">Analyzer</p>
+                      <p className={`text-3xl font-bold ${agentScoreColor(analyzerScore)}`}>
+                        {analyzerScore ?? '—'}<span className="text-base text-muted-foreground font-normal"> /100</span>
+                      </p>
+                      <p className={`text-xs mt-1 ${agentScoreColor(analyzerScore)}`}>
+                        {analyzerScore == null ? '—' : analyzerScore >= 70 ? 'Strong' : analyzerScore >= 40 ? 'Adequate' : 'Weak'}
+                      </p>
+                    </div>
+                    {/* Agent 8: Risk Assessor */}
+                    <div className="md:pl-6 pt-4 md:pt-0">
+                      <p className="text-[10px] text-muted-foreground/60 mb-1">Agent 8</p>
+                      <p className="text-sm font-semibold text-foreground mb-3">Risk Assessor</p>
+                      <p className={`text-3xl font-bold ${agentScoreColor(riskAgentScore, true)}`}>
+                        {riskAgentScore ?? '—'}<span className="text-base text-muted-foreground font-normal"> /100</span>
+                      </p>
+                      <p className={`text-xs mt-1 ${agentScoreColor(riskAgentScore, true)}`}>
+                        {riskAgentScore == null ? '—' : riskAgentScore <= 20 ? 'No risk detected' : riskAgentScore <= 50 ? 'Some risk' : 'High risk'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground/50 mt-3 text-center">
+                  All technical detail — timelines, code-quality metrics, model usage, plagiarism checks — lives under the{' '}
+                  <button onClick={() => setActiveTab('agent-insights')} className="text-muted-foreground hover:text-foreground underline underline-offset-2">Agent Insights</button> tab.
+                </p>
+              </div>
+            )}
+
+          </div>
+        )
+      })()}
+
+      {activeTab === 'submissions' && isLeetcodeStyle && (
         <div className="space-y-6">
           {filteredSubmissions.length === 0 ? (
-            <Card className="border-zinc-800 bg-zinc-950">
-              <CardContent className="p-6 text-zinc-400 text-center">
+            <Card className="border-border bg-background">
+              <CardContent className="p-6 text-muted-foreground text-center">
                 {!isCandidateView && submissions.length > 0 
                   ? 'No coding assessment submissions found.' 
                   : 'No submissions yet.'}
@@ -1279,10 +789,10 @@ export function SessionDetailView({
             </Card>
           ) : (
             filteredSubmissions.map((submission, index) => (
-              <Card key={index} className="border-zinc-800 bg-zinc-950">
+              <Card key={index} className="border-border bg-background">
                 <CardHeader>
                   <div className="flex items-center justify-between">
-                    <CardTitle className="text-white flex items-center gap-2">
+                    <CardTitle className="text-foreground flex items-center gap-2">
                       <FileText className="h-4 w-4" />
                       Submission #{index + 1}
                     </CardTitle>
@@ -1301,7 +811,7 @@ export function SessionDetailView({
                       </Badge>
                     </div>
                   </div>
-                  <div className="text-sm text-zinc-400 mt-2">
+                  <div className="text-sm text-muted-foreground mt-2">
                     <span>Problem ID: {submission.problemId ?? submission.problem_id ?? 'N/A'}</span>
                     <span className="mx-2">•</span>
                     <span>
@@ -1336,10 +846,10 @@ export function SessionDetailView({
                 <CardContent>
                   {/* Submitted Code */}
                   <div className="mt-4">
-                    <h3 className="text-white font-semibold mb-2">Submitted Code</h3>
+                    <h3 className="text-foreground font-semibold mb-2">Submitted Code</h3>
                     <div className="relative">
-                      <pre className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 overflow-x-auto">
-                        <code className="text-sm text-zinc-300 font-mono whitespace-pre">
+                      <pre className="bg-card border border-border rounded-lg p-4 overflow-x-auto">
+                        <code className="text-sm text-foreground/80 font-mono whitespace-pre">
                           {submission.code || 'No code submitted'}
                         </code>
                       </pre>
@@ -1349,7 +859,7 @@ export function SessionDetailView({
                   {/* Test Results - Filtered for candidates */}
                   {submission.testResults && (
                     <div className="mt-4">
-                      <h3 className="text-white font-semibold mb-2">Test Results</h3>
+                      <h3 className="text-foreground font-semibold mb-2">Test Results</h3>
                       {isCandidateView ? (
                         // Candidate view: Only show visible test cases
                         (() => {
@@ -1360,14 +870,14 @@ export function SessionDetailView({
                           
                           return (
                             <div className="space-y-3">
-                              <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+                              <div className="bg-card border border-border rounded-lg p-4">
                                 {filteredResults && (Array.isArray(filteredResults) || filteredResults.tests || filteredResults.testCases || filteredResults.visible) ? (
                                   <div className="space-y-2">
                                     {Array.isArray(filteredResults) ? (
                                       filteredResults.map((test: any, idx: number) => (
-                                        <div key={idx} className="p-3 rounded bg-zinc-800/50 border border-zinc-700">
+                                        <div key={idx} className="p-3 rounded bg-muted/50 border border-border">
                                           <div className="flex items-center justify-between mb-1">
-                                            <span className="text-sm font-semibold text-white">
+                                            <span className="text-sm font-semibold text-foreground">
                                               Test Case {idx + 1}
                                             </span>
                                             <Badge className={
@@ -1380,46 +890,46 @@ export function SessionDetailView({
                                           </div>
                                           {test.input && (
                                             <div className="mt-2">
-                                              <span className="text-xs text-zinc-400">Input: </span>
-                                              <code className="text-xs text-zinc-300 bg-zinc-900 px-2 py-1 rounded">
+                                              <span className="text-xs text-muted-foreground">Input: </span>
+                                              <code className="text-xs text-foreground/80 bg-card px-2 py-1 rounded">
                                                 {typeof test.input === 'object' ? JSON.stringify(test.input) : test.input}
                                               </code>
                                             </div>
                                           )}
                                           {test.expected && (
                                             <div className="mt-2">
-                                              <span className="text-xs text-zinc-400">Expected: </span>
-                                              <code className="text-xs text-zinc-300 bg-zinc-900 px-2 py-1 rounded">
+                                              <span className="text-xs text-muted-foreground">Expected: </span>
+                                              <code className="text-xs text-foreground/80 bg-card px-2 py-1 rounded">
                                                 {typeof test.expected === 'object' ? JSON.stringify(test.expected) : test.expected}
                                               </code>
                                             </div>
                                           )}
                                           {test.output && (
                                             <div className="mt-2">
-                                              <span className="text-xs text-zinc-400">Your Output: </span>
-                                              <code className="text-xs text-zinc-300 bg-zinc-900 px-2 py-1 rounded">
+                                              <span className="text-xs text-muted-foreground">Your Output: </span>
+                                              <code className="text-xs text-foreground/80 bg-card px-2 py-1 rounded">
                                                 {typeof test.output === 'object' ? JSON.stringify(test.output) : test.output}
                                               </code>
                                             </div>
                                           )}
                                           {test.message && (
-                                            <p className="text-xs text-zinc-400 mt-2">{test.message}</p>
+                                            <p className="text-xs text-muted-foreground mt-2">{test.message}</p>
                                           )}
                                         </div>
                                       ))
                                     ) : (
-                                      <pre className="text-sm text-zinc-300 whitespace-pre-wrap">
+                                      <pre className="text-sm text-foreground/80 whitespace-pre-wrap">
                                         {JSON.stringify(filteredResults, null, 2)}
                                       </pre>
                                     )}
                                   </div>
                                 ) : (
-                                  <div className="text-zinc-400 text-sm">
+                                  <div className="text-muted-foreground text-sm">
                                     No visible test results available
                                   </div>
                                 )}
                               </div>
-                              <p className="text-xs text-zinc-500">
+                              <p className="text-xs text-muted-foreground/70">
                                 Showing {visibleTestCount} visible test case{visibleTestCount !== 1 ? 's' : ''}. 
                                 Hidden test cases are not shown.
                               </p>
@@ -1428,8 +938,8 @@ export function SessionDetailView({
                         })()
                       ) : (
                         // Recruiter view: Show all test results
-                        <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
-                          <pre className="text-sm text-zinc-300 whitespace-pre-wrap">
+                        <div className="bg-card border border-border rounded-lg p-4">
+                          <pre className="text-sm text-foreground/80 whitespace-pre-wrap">
                             {JSON.stringify(submission.testResults, null, 2)}
                           </pre>
                         </div>
@@ -1443,188 +953,244 @@ export function SessionDetailView({
         </div>
       )}
 
-      {/* Chat History Tab - Full conversation view */}
-      {activeTab === 'chat-history' && (
-        <Card className="border-zinc-800 bg-zinc-950">
-          <CardHeader>
-            <CardTitle className="text-white flex items-center gap-2">
-              <MessageSquare className="h-4 w-4" />
-              Chat History
-              {aiInteractions.length > 0 && (
-                <Badge className="ml-2 bg-zinc-800 text-zinc-400">
-                  {aiInteractions.length} messages
-                </Badge>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {aiInteractions.length === 0 ? (
-              <div className="p-6 text-zinc-400 text-center">
-                No chat history available for this session.
-              </div>
-            ) : (
-              <div className="space-y-4 max-h-[600px] overflow-y-auto">
-                {/* Group interactions by conversation flow - sorted by timestamp */}
-                {aiInteractions
-                  .filter(interaction => 
-                    interaction.eventType === 'prompt_sent' || 
-                    interaction.eventType === 'response_received' ||
-                    interaction.promptText || 
-                    interaction.responseText
-                  )
-                  .sort((a, b) => {
-                    const timeA = new Date(a.timestamp || a.createdAt || 0).getTime();
-                    const timeB = new Date(b.timestamp || b.createdAt || 0).getTime();
-                    return timeA - timeB;
-                  })
-                  .map((interaction, index) => {
-                    const isPrompt = interaction.eventType === 'prompt_sent' || !!interaction.promptText;
-                    const isResponse = interaction.eventType === 'response_received' || !!interaction.responseText;
-                    const timestamp = new Date(interaction.timestamp || interaction.createdAt || Date.now());
-                    
-                    return (
-                      <div key={index} className="flex flex-col gap-2">
-                        {/* Candidate Message (Prompt) */}
-                        {isPrompt && interaction.promptText && (
-                          <div className="flex items-start gap-3">
-                            <div className="flex-shrink-0 w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center">
-                              <UserCircle className="h-4 w-4 text-emerald-400" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="bg-zinc-800 rounded-lg rounded-tl-none p-4">
-                                <div className="flex items-center justify-between mb-2">
-                                  <span className="text-emerald-400 text-sm font-semibold">Candidate</span>
-                                  <span className="text-zinc-500 text-xs">
-                                    {timestamp.toLocaleTimeString()}
-                                  </span>
-                                </div>
-                                <p className="text-white text-sm whitespace-pre-wrap">
-                                  {interaction.promptText}
-                                </p>
-                                {interaction.model && (
-                                  <div className="text-zinc-400 text-xs mt-2">
-                                    Using: {interaction.model}
+      {/* Chat History Tab — two sub-tabs: Conversation + Code Actions */}
+      {activeTab === 'chat-history' && (() => {
+        const convMessages = aiInteractions
+          .filter(i => i.eventType === 'prompt_sent' || i.eventType === 'response_received' || i.promptText || i.responseText)
+          .sort((a, b) => new Date(a.timestamp || a.createdAt || 0).getTime() - new Date(b.timestamp || b.createdAt || 0).getTime())
+
+        const codeActions = aiInteractions
+          .filter(i => ['copy', 'code_copied', 'code_copied_from_ai', 'apply', 'code_applied', 'code_modified'].includes(i.eventType))
+          .sort((a, b) => new Date(a.timestamp || a.createdAt || 0).getTime() - new Date(b.timestamp || b.createdAt || 0).getTime())
+
+        const actionLabel = (evt: string) => {
+          if (['copy','code_copied','code_copied_from_ai'].includes(evt)) return { label: 'Copied from AI', color: 'text-amber-400', bg: 'bg-amber-500/10 border-amber-500/20' }
+          if (['apply','code_applied'].includes(evt)) return { label: 'Applied to editor', color: 'text-violet-400', bg: 'bg-violet-500/10 border-violet-500/20' }
+          if (evt === 'code_modified') return { label: 'Manually edited', color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20' }
+          return { label: evt, color: 'text-muted-foreground', bg: 'bg-muted/40 border-border' }
+        }
+
+        return (
+          <div className="rounded-2xl border border-border bg-card/40 overflow-hidden">
+            {/* Sub-tab bar */}
+            <div className="flex items-center gap-0 border-b border-border px-4 pt-3">
+              <button
+                onClick={() => setChatSubTab('conversation')}
+                className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                  chatSubTab === 'conversation'
+                    ? 'text-foreground border-foreground'
+                    : 'text-muted-foreground border-transparent hover:text-foreground'
+                }`}
+              >
+                <MessageSquare className="h-3.5 w-3.5" />
+                Conversation
+                {convMessages.length > 0 && (
+                  <span className="rounded-full bg-muted px-1.5 text-[10px]">{convMessages.length}</span>
+                )}
+              </button>
+              <button
+                onClick={() => setChatSubTab('code-actions')}
+                className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                  chatSubTab === 'code-actions'
+                    ? 'text-foreground border-foreground'
+                    : 'text-muted-foreground border-transparent hover:text-foreground'
+                }`}
+              >
+                <Code className="h-3.5 w-3.5" />
+                Code Actions
+                {codeActions.length > 0 && (
+                  <span className="rounded-full bg-muted px-1.5 text-[10px]">{codeActions.length}</span>
+                )}
+              </button>
+            </div>
+
+            {/* ── Conversation sub-tab ─────────────────────────────────── */}
+            {chatSubTab === 'conversation' && (
+              <div className="p-4">
+                {convMessages.length === 0 ? (
+                  <div className="py-12 text-center">
+                    <MessageSquare className="h-10 w-10 text-muted-foreground/40 mx-auto mb-3" />
+                    <p className="text-sm font-medium text-muted-foreground">No AI conversations captured</p>
+                    <p className="text-xs text-muted-foreground/60 mt-1">Prompts sent during the session will appear here.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4 max-h-[600px] overflow-y-auto pr-1">
+                    {convMessages.map((interaction, index) => {
+                      const isPrompt   = interaction.eventType === 'prompt_sent' || !!interaction.promptText
+                      const isResponse = interaction.eventType === 'response_received' || !!interaction.responseText
+                      const ts = new Date(interaction.timestamp || interaction.createdAt || Date.now())
+
+                      return (
+                        <div key={index} className="flex flex-col gap-2">
+                          {/* Candidate bubble */}
+                          {isPrompt && interaction.promptText && (
+                            <div className="flex items-start gap-3">
+                              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-emerald-500/15 flex items-center justify-center">
+                                <UserCircle className="h-4 w-4 text-emerald-400" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="bg-muted/60 rounded-xl rounded-tl-none p-4">
+                                  <div className="flex items-center justify-between mb-2">
+                                    <span className="text-xs font-semibold text-emerald-400">Candidate</span>
+                                    <span className="text-[10px] text-muted-foreground/60">{ts.toLocaleTimeString()}</span>
                                   </div>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                        
-                        {/* AI Response */}
-                        {isResponse && interaction.responseText && (
-                          <div className="flex items-start gap-3">
-                            <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center">
-                              <Bot className="h-4 w-4 text-blue-400" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="bg-zinc-900 border border-zinc-800 rounded-lg rounded-tl-none p-4">
-                                <div className="flex items-center justify-between mb-2">
-                                  <span className="text-blue-400 text-sm font-semibold flex items-center gap-2">
-                                    AI Assistant
-                                    {interaction.model && (
-                                      <Badge className="bg-blue-500/20 text-blue-400 text-xs">
-                                        {interaction.model}
-                                      </Badge>
-                                    )}
-                                  </span>
-                                  <span className="text-zinc-500 text-xs">
-                                    {timestamp.toLocaleTimeString()}
-                                  </span>
+                                  <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{interaction.promptText}</p>
+                                  {interaction.model && (
+                                    <p className="text-[10px] text-muted-foreground/60 mt-2">Model: {interaction.model}</p>
+                                  )}
                                 </div>
-                                <p className="text-zinc-300 text-sm whitespace-pre-wrap">
-                                  {interaction.responseText}
-                                </p>
-                                {interaction.tokensUsed && (
-                                  <div className="text-zinc-500 text-xs mt-2">
-                                    Tokens used: {interaction.tokensUsed}
-                                  </div>
-                                )}
                               </div>
                             </div>
-                          </div>
-                        )}
-                        
-                        {/* Code Snippet if present */}
-                        {interaction.codeSnippet && (
-                          <div className="ml-11 bg-zinc-900 border border-zinc-800 rounded-lg p-3">
-                            <div className="text-zinc-400 text-xs mb-2">Code Snippet</div>
-                            <pre className="text-xs text-zinc-300 font-mono whitespace-pre-wrap overflow-x-auto">
-                              {interaction.codeSnippet}
-                            </pre>
-                            {interaction.codeLineNumber && (
-                              <div className="text-zinc-500 text-xs mt-1">
-                                Line: {interaction.codeLineNumber}
+                          )}
+                          {/* AI bubble */}
+                          {isResponse && interaction.responseText && (
+                            <div className="flex items-start gap-3">
+                              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-violet-500/15 flex items-center justify-center">
+                                <Bot className="h-4 w-4 text-violet-400" />
                               </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                
-                {/* Fallback: Show all interactions if no prompt/response structure */}
-                {aiInteractions.filter(i => 
-                  i.eventType === 'prompt_sent' || 
-                  i.eventType === 'response_received' ||
-                  i.promptText || 
-                  i.responseText
-                ).length === 0 && (
-                  <div className="space-y-3">
-                    {aiInteractions.map((interaction, index) => (
-                      <div key={index} className="border border-zinc-800 bg-zinc-900/50 rounded-lg p-4">
-                        <div className="flex items-start justify-between mb-2">
-                          <span className="text-emerald-400 font-semibold text-sm">
-                            {interaction.eventType || 'Interaction'}
-                          </span>
-                          <span className="text-zinc-500 text-xs">
-                            {new Date(interaction.timestamp || interaction.createdAt).toLocaleString()}
-                          </span>
+                              <div className="flex-1 min-w-0">
+                                <div className="bg-card border border-border rounded-xl rounded-tl-none p-4">
+                                  <div className="flex items-center justify-between mb-2">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs font-semibold text-violet-400">AI Assistant</span>
+                                      {interaction.model && (
+                                        <span className="rounded-full bg-violet-500/15 px-1.5 py-0.5 text-[10px] text-violet-400">{interaction.model}</span>
+                                      )}
+                                    </div>
+                                    <span className="text-[10px] text-muted-foreground/60">{ts.toLocaleTimeString()}</span>
+                                  </div>
+                                  <p className="text-sm text-foreground/80 whitespace-pre-wrap leading-relaxed">{interaction.responseText}</p>
+                                  {(interaction.promptTokens || interaction.completionTokens) && (
+                                    <p className="text-[10px] text-muted-foreground/60 mt-2">
+                                      {[
+                                        interaction.promptTokens   ? `${interaction.promptTokens} in`  : null,
+                                        interaction.completionTokens ? `${interaction.completionTokens} out` : null,
+                                      ].filter(Boolean).join(' · ')} tokens
+                                      {interaction.latencyMs ? ` · ${interaction.latencyMs}ms` : ''}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                          {/* Inline code snippet */}
+                          {interaction.codeSnippet && (
+                            <div className="ml-11 rounded-lg border border-border bg-background/60 p-3">
+                              <p className="text-[10px] text-muted-foreground/60 mb-1.5 font-semibold tracking-wide">CODE SNIPPET</p>
+                              <pre className="text-xs text-foreground/80 font-mono whitespace-pre-wrap overflow-x-auto">{interaction.codeSnippet}</pre>
+                              {interaction.codeLineNumber && (
+                                <p className="text-[10px] text-muted-foreground/60 mt-1">Line {interaction.codeLineNumber}</p>
+                              )}
+                            </div>
+                          )}
                         </div>
-                        {interaction.model && (
-                          <div className="text-zinc-400 text-xs mb-2">Model: {interaction.model}</div>
-                        )}
-                        {interaction.promptText && (
-                          <div className="text-zinc-300 text-sm mb-2">
-                            <span className="text-zinc-500">Prompt: </span>
-                            {interaction.promptText}
-                          </div>
-                        )}
-                        {interaction.responseText && (
-                          <div className="text-zinc-300 text-sm">
-                            <span className="text-zinc-500">Response: </span>
-                            {interaction.responseText}
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
               </div>
             )}
-          </CardContent>
-        </Card>
-      )}
+
+            {/* ── Code Actions sub-tab ──────────────────────────────────── */}
+            {chatSubTab === 'code-actions' && (
+              <div className="p-4">
+                {codeActions.length === 0 ? (
+                  <div className="py-12 text-center">
+                    <Code className="h-10 w-10 text-muted-foreground/40 mx-auto mb-3" />
+                    <p className="text-sm font-medium text-muted-foreground">No code actions recorded</p>
+                    <p className="text-xs text-muted-foreground/60 mt-1">Copy, apply, and edit events will appear here.</p>
+                  </div>
+                ) : (
+                  <div className="max-h-[600px] overflow-y-auto pr-1">
+                    {/* Summary strip */}
+                    {(() => {
+                      const copies = codeActions.filter(i => ['copy','code_copied','code_copied_from_ai'].includes(i.eventType)).length
+                      const applies = codeActions.filter(i => ['apply','code_applied'].includes(i.eventType)).length
+                      const edits = codeActions.filter(i => i.eventType === 'code_modified').length
+                      return (
+                        <div className="flex items-center gap-3 mb-4 flex-wrap">
+                          {copies > 0 && (
+                            <span className="rounded-full border bg-amber-500/10 border-amber-500/20 px-3 py-1 text-xs text-amber-400">
+                              {copies} cop{copies === 1 ? 'y' : 'ies'} from AI
+                            </span>
+                          )}
+                          {applies > 0 && (
+                            <span className="rounded-full border bg-violet-500/10 border-violet-500/20 px-3 py-1 text-xs text-violet-400">
+                              {applies} applied to editor
+                            </span>
+                          )}
+                          {edits > 0 && (
+                            <span className="rounded-full border bg-emerald-500/10 border-emerald-500/20 px-3 py-1 text-xs text-emerald-400">
+                              {edits} manual edit{edits === 1 ? '' : 's'}
+                            </span>
+                          )}
+                        </div>
+                      )
+                    })()}
+
+                    {/* Timeline */}
+                    <div className="relative">
+                      <div className="absolute left-3.5 top-0 bottom-0 w-px bg-border" />
+                      <div className="space-y-3">
+                        {codeActions.map((action, i) => {
+                          const { label, color, bg } = actionLabel(action.eventType)
+                          const ts = new Date(action.timestamp || action.createdAt || Date.now())
+                          const snippet = action.codeSnippet || action.code_snippet || ''
+                          const lines = snippet ? snippet.split('\n').length : 0
+
+                          return (
+                            <div key={i} className="relative pl-8">
+                              {/* dot */}
+                              <div className={`absolute left-2 top-1.5 h-3 w-3 rounded-full border-2 border-background ${color.replace('text-', 'bg-').replace('-400', '-400')}`} />
+                              <div className={`rounded-xl border p-4 ${bg}`}>
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className={`text-xs font-semibold ${color}`}>{label}</span>
+                                  <span className="text-[10px] text-muted-foreground/60">{ts.toLocaleTimeString()}</span>
+                                </div>
+                                {lines > 0 && (
+                                  <p className="text-xs text-muted-foreground mb-2">{lines} line{lines !== 1 ? 's' : ''} of code</p>
+                                )}
+                                {snippet && (
+                                  <pre className="text-[11px] font-mono text-foreground/70 bg-background/50 rounded-lg p-2 whitespace-pre-wrap overflow-x-auto max-h-[120px] overflow-y-auto">
+                                    {snippet.length > 400 ? snippet.slice(0, 400) + '\n…' : snippet}
+                                  </pre>
+                                )}
+                                {action.codeLineNumber && (
+                                  <p className="text-[10px] text-muted-foreground/60 mt-1.5">at line {action.codeLineNumber}</p>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })()}
 
       {/* Agent Insights Tab - Only for recruiters */}
       {activeTab === 'agent-insights' && !isCandidateView && agentInsights && (
         <div className="space-y-6">
           {/* Agent 6: Watcher - Real-time Monitoring */}
           {agentInsights.watcher && (
-            <Card className="border-zinc-800 bg-zinc-950">
+            <Card className="border-border bg-background">
               <CardHeader>
-                <CardTitle className="text-white flex items-center gap-2">
-                  <Monitor className="h-5 w-5 text-blue-400" />
+                <CardTitle className="text-foreground flex items-center gap-2">
+                  <Monitor className="h-5 w-5 text-violet-400" />
                   Agent 6: Watcher
-                  <Badge className="ml-2 bg-blue-500/20 text-blue-400">Monitoring Agent</Badge>
+                  <Badge className="ml-2 bg-violet-500/20 text-violet-400">Monitoring Agent</Badge>
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 {/* Risk Score */}
                 {agentInsights.watcher.riskScore !== undefined && (
-                  <div className="p-4 rounded-lg border border-zinc-800 bg-zinc-900/50">
+                  <div className="p-4 rounded-lg border border-border bg-card/60">
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-zinc-400 text-sm">Risk Score</span>
+                      <span className="text-muted-foreground text-sm">Risk Score</span>
                       <span className={`text-2xl font-bold ${
                         agentInsights.watcher.riskScore >= 70 ? 'text-red-400' :
                         agentInsights.watcher.riskScore >= 40 ? 'text-amber-400' :
@@ -1647,7 +1213,7 @@ export function SessionDetailView({
                 {/* Alerts */}
                 {agentInsights.watcher.alerts && agentInsights.watcher.alerts.length > 0 && (
                   <div>
-                    <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                    <h3 className="text-foreground font-semibold mb-3 flex items-center gap-2">
                       <AlertTriangle className="h-4 w-4 text-amber-400" />
                       Alerts ({agentInsights.watcher.alerts.length})
                     </h3>
@@ -1656,23 +1222,23 @@ export function SessionDetailView({
                         <div key={i} className={`p-3 rounded-lg border ${
                           alert.severity === 'high' ? 'bg-red-500/10 border-red-500/30' :
                           alert.severity === 'medium' ? 'bg-amber-500/10 border-amber-500/30' :
-                          'bg-blue-500/10 border-blue-500/30'
+                          'bg-violet-500/10 border-violet-500/30'
                         }`}>
                           <div className="flex items-start justify-between">
                             <div className="flex-1">
                               <span className={`text-sm font-semibold ${
                                 alert.severity === 'high' ? 'text-red-400' :
                                 alert.severity === 'medium' ? 'text-amber-400' :
-                                'text-blue-400'
+                                'text-violet-400'
                               }`}>
                                 {alert.type?.replace(/_/g, ' ').toUpperCase() || 'Alert'}
                               </span>
-                              <p className="text-zinc-300 text-sm mt-1">{alert.message}</p>
+                              <p className="text-foreground/80 text-sm mt-1">{alert.message}</p>
                             </div>
                             <Badge className={
                               alert.severity === 'high' ? 'bg-red-500/20 text-red-400' :
                               alert.severity === 'medium' ? 'bg-amber-500/20 text-amber-400' :
-                              'bg-blue-500/20 text-blue-400'
+                              'bg-violet-500/20 text-violet-400'
                             }>
                               {alert.severity}
                             </Badge>
@@ -1686,15 +1252,15 @@ export function SessionDetailView({
                 {/* Timeline */}
                 {agentInsights.watcher.timeline && agentInsights.watcher.timeline.length > 0 && (
                   <div>
-                    <h3 className="text-white font-semibold mb-3">Activity Timeline</h3>
+                    <h3 className="text-foreground font-semibold mb-3">Activity Timeline</h3>
                     <div className="space-y-2 max-h-64 overflow-y-auto">
                       {agentInsights.watcher.timeline.map((event: any, i: number) => (
-                        <div key={i} className="flex items-start gap-3 p-2 rounded-lg bg-zinc-900/50">
+                        <div key={i} className="flex items-start gap-3 p-2 rounded-lg bg-card/60">
                           <div className="w-2 h-2 rounded-full bg-emerald-400 mt-1.5 shrink-0" />
                           <div className="flex-1 min-w-0">
-                            <p className="text-zinc-300 text-sm">{event.description || event.type}</p>
+                            <p className="text-foreground/80 text-sm">{event.description || event.type}</p>
                             {event.timestamp && (
-                              <p className="text-zinc-500 text-xs mt-1">
+                              <p className="text-muted-foreground/70 text-xs mt-1">
                                 {new Date(event.timestamp).toLocaleString()}
                               </p>
                             )}
@@ -1708,12 +1274,12 @@ export function SessionDetailView({
                 {/* Metrics */}
                 {agentInsights.watcher.metrics && (
                   <div>
-                    <h3 className="text-white font-semibold mb-3">Metrics</h3>
+                    <h3 className="text-foreground font-semibold mb-3">Metrics</h3>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                       {Object.entries(agentInsights.watcher.metrics).map(([key, value]: [string, any]) => (
-                        <div key={key} className="p-3 rounded-lg bg-zinc-900/50 border border-zinc-800">
-                          <div className="text-zinc-400 text-xs mb-1">{key.replace(/_/g, ' ')}</div>
-                          <div className="text-white text-lg font-semibold">{value}</div>
+                        <div key={key} className="p-3 rounded-lg bg-card/60 border border-border">
+                          <div className="text-muted-foreground text-xs mb-1">{key.replace(/_/g, ' ')}</div>
+                          <div className="text-foreground text-lg font-semibold">{value}</div>
                         </div>
                       ))}
                     </div>
@@ -1723,11 +1289,11 @@ export function SessionDetailView({
                 {/* Evidence */}
                 {agentInsights.watcher.evidence && agentInsights.watcher.evidence.length > 0 && (
                   <div>
-                    <h3 className="text-white font-semibold mb-3">Evidence</h3>
+                    <h3 className="text-foreground font-semibold mb-3">Evidence</h3>
                     <div className="space-y-2">
                       {agentInsights.watcher.evidence.map((evidence: string, i: number) => (
-                        <div key={i} className="p-3 rounded-lg bg-zinc-900/50 border border-zinc-800">
-                          <p className="text-zinc-300 text-sm">{evidence}</p>
+                        <div key={i} className="p-3 rounded-lg bg-card/60 border border-border">
+                          <p className="text-foreground/80 text-sm">{evidence}</p>
                         </div>
                       ))}
                     </div>
@@ -1736,16 +1302,16 @@ export function SessionDetailView({
 
                 {/* Explanation */}
                 {agentInsights.watcher.explanation && (
-                  <div className="p-4 rounded-lg bg-blue-500/10 border border-blue-500/30">
-                    <h3 className="text-blue-400 font-semibold mb-2">Analysis Explanation</h3>
-                    <p className="text-zinc-300 text-sm">{agentInsights.watcher.explanation}</p>
+                  <div className="p-4 rounded-lg bg-violet-500/10 border border-violet-500/30">
+                    <h3 className="text-violet-400 font-semibold mb-2">Analysis Explanation</h3>
+                    <p className="text-foreground/80 text-sm">{agentInsights.watcher.explanation}</p>
                   </div>
                 )}
 
                 {/* Confidence */}
                 {agentInsights.watcher.confidence !== undefined && (
-                  <div className="text-zinc-400 text-xs">
-                    Confidence: {Math.round(agentInsights.watcher.confidence * 100)}%
+                  <div className="text-muted-foreground text-xs">
+                    Confidence: {agentInsights.watcher.confidence}%
                   </div>
                 )}
               </CardContent>
@@ -1754,20 +1320,20 @@ export function SessionDetailView({
 
           {/* Agent 7: Extractor - Code Analysis */}
           {agentInsights.extractor && (
-            <Card className="border-zinc-800 bg-zinc-950">
+            <Card className="border-border bg-background">
               <CardHeader>
-                <CardTitle className="text-white flex items-center gap-2">
-                  <Code className="h-5 w-5 text-purple-400" />
+                <CardTitle className="text-foreground flex items-center gap-2">
+                  <Code className="h-5 w-5 text-violet-400" />
                   Agent 7: Analyzer
-                  <Badge className="ml-2 bg-purple-500/20 text-purple-400">Analysis Agent</Badge>
+                  <Badge className="ml-2 bg-violet-500/20 text-violet-400">Analysis Agent</Badge>
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 {/* Behavior Score */}
                 {agentInsights.extractor.behaviorScore !== undefined && (
-                  <div className="p-4 rounded-lg border border-zinc-800 bg-zinc-900/50">
+                  <div className="p-4 rounded-lg border border-border bg-card/60">
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-zinc-400 text-sm">Behavior Score</span>
+                      <span className="text-muted-foreground text-sm">Behavior Score</span>
                       <span className={`text-2xl font-bold ${
                         agentInsights.extractor.behaviorScore >= 70 ? 'text-emerald-400' :
                         agentInsights.extractor.behaviorScore >= 40 ? 'text-amber-400' :
@@ -1780,7 +1346,7 @@ export function SessionDetailView({
                       value={agentInsights.extractor.behaviorScore} 
                       className="h-2"
                     />
-                    <p className="text-zinc-500 text-xs mt-2">
+                    <p className="text-muted-foreground/70 text-xs mt-2">
                       Higher score indicates better coding behavior and integration quality
                     </p>
                   </div>
@@ -1789,52 +1355,52 @@ export function SessionDetailView({
                 {/* Code Quality */}
                 {agentInsights.extractor.codeQuality && (
                   <div>
-                    <h3 className="text-white font-semibold mb-3">Code Quality Metrics</h3>
+                    <h3 className="text-foreground font-semibold mb-3">Code Quality Metrics</h3>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                       {agentInsights.extractor.codeQuality.totalLines !== undefined && (
-                        <div className="p-3 rounded-lg bg-zinc-900/50 border border-zinc-800">
-                          <div className="text-zinc-400 text-xs mb-1">Total Lines</div>
-                          <div className="text-white text-lg font-semibold">
+                        <div className="p-3 rounded-lg bg-card/60 border border-border">
+                          <div className="text-muted-foreground text-xs mb-1">Total Lines</div>
+                          <div className="text-foreground text-lg font-semibold">
                             {agentInsights.extractor.codeQuality.totalLines}
                           </div>
                         </div>
                       )}
                       {agentInsights.extractor.codeQuality.nonEmptyLines !== undefined && (
-                        <div className="p-3 rounded-lg bg-zinc-900/50 border border-zinc-800">
-                          <div className="text-zinc-400 text-xs mb-1">Non-empty Lines</div>
-                          <div className="text-white text-lg font-semibold">
+                        <div className="p-3 rounded-lg bg-card/60 border border-border">
+                          <div className="text-muted-foreground text-xs mb-1">Non-empty Lines</div>
+                          <div className="text-foreground text-lg font-semibold">
                             {agentInsights.extractor.codeQuality.nonEmptyLines}
                           </div>
                         </div>
                       )}
                       {agentInsights.extractor.codeQuality.comments !== undefined && (
-                        <div className="p-3 rounded-lg bg-zinc-900/50 border border-zinc-800">
-                          <div className="text-zinc-400 text-xs mb-1">Comments</div>
-                          <div className="text-white text-lg font-semibold">
+                        <div className="p-3 rounded-lg bg-card/60 border border-border">
+                          <div className="text-muted-foreground text-xs mb-1">Comments</div>
+                          <div className="text-foreground text-lg font-semibold">
                             {agentInsights.extractor.codeQuality.comments}
                           </div>
                         </div>
                       )}
                       {agentInsights.extractor.codeQuality.commentRatio !== undefined && (
-                        <div className="p-3 rounded-lg bg-zinc-900/50 border border-zinc-800">
-                          <div className="text-zinc-400 text-xs mb-1">Comment Ratio</div>
-                          <div className="text-white text-lg font-semibold">
+                        <div className="p-3 rounded-lg bg-card/60 border border-border">
+                          <div className="text-muted-foreground text-xs mb-1">Comment Ratio</div>
+                          <div className="text-foreground text-lg font-semibold">
                             {Math.round(agentInsights.extractor.codeQuality.commentRatio * 100)}%
                           </div>
                         </div>
                       )}
                       {agentInsights.extractor.codeQuality.complexity && (
-                        <div className="p-3 rounded-lg bg-zinc-900/50 border border-zinc-800">
-                          <div className="text-zinc-400 text-xs mb-1">Complexity</div>
-                          <div className="text-white text-lg font-semibold">
+                        <div className="p-3 rounded-lg bg-card/60 border border-border">
+                          <div className="text-muted-foreground text-xs mb-1">Complexity</div>
+                          <div className="text-foreground text-lg font-semibold">
                             {agentInsights.extractor.codeQuality.complexity}
                           </div>
                         </div>
                       )}
                       {agentInsights.extractor.codeQuality.maxIndentation !== undefined && (
-                        <div className="p-3 rounded-lg bg-zinc-900/50 border border-zinc-800">
-                          <div className="text-zinc-400 text-xs mb-1">Max Indentation</div>
-                          <div className="text-white text-lg font-semibold">
+                        <div className="p-3 rounded-lg bg-card/60 border border-border">
+                          <div className="text-muted-foreground text-xs mb-1">Max Indentation</div>
+                          <div className="text-foreground text-lg font-semibold">
                             {agentInsights.extractor.codeQuality.maxIndentation}
                           </div>
                         </div>
@@ -1846,35 +1412,35 @@ export function SessionDetailView({
                 {/* Code Integration */}
                 {agentInsights.extractor.codeIntegration && (
                   <div>
-                    <h3 className="text-white font-semibold mb-3">Code Integration Analysis</h3>
+                    <h3 className="text-foreground font-semibold mb-3">Code Integration Analysis</h3>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                       {agentInsights.extractor.codeIntegration.modifications !== undefined && (
-                        <div className="p-3 rounded-lg bg-zinc-900/50 border border-zinc-800">
-                          <div className="text-zinc-400 text-xs mb-1">Modifications</div>
-                          <div className="text-white text-lg font-semibold">
+                        <div className="p-3 rounded-lg bg-card/60 border border-border">
+                          <div className="text-muted-foreground text-xs mb-1">Modifications</div>
+                          <div className="text-foreground text-lg font-semibold">
                             {agentInsights.extractor.codeIntegration.modifications}
                           </div>
                         </div>
                       )}
                       {agentInsights.extractor.codeIntegration.copies !== undefined && (
-                        <div className="p-3 rounded-lg bg-zinc-900/50 border border-zinc-800">
-                          <div className="text-zinc-400 text-xs mb-1">Copies</div>
-                          <div className="text-white text-lg font-semibold">
+                        <div className="p-3 rounded-lg bg-card/60 border border-border">
+                          <div className="text-muted-foreground text-xs mb-1">Copies</div>
+                          <div className="text-foreground text-lg font-semibold">
                             {agentInsights.extractor.codeIntegration.copies}
                           </div>
                         </div>
                       )}
                       {agentInsights.extractor.codeIntegration.modificationRatio !== undefined && (
-                        <div className="p-3 rounded-lg bg-zinc-900/50 border border-zinc-800">
-                          <div className="text-zinc-400 text-xs mb-1">Modification Ratio</div>
-                          <div className="text-white text-lg font-semibold">
+                        <div className="p-3 rounded-lg bg-card/60 border border-border">
+                          <div className="text-muted-foreground text-xs mb-1">Modification Ratio</div>
+                          <div className="text-foreground text-lg font-semibold">
                             {Math.round(agentInsights.extractor.codeIntegration.modificationRatio * 100)}%
                           </div>
                         </div>
                       )}
                       {agentInsights.extractor.codeIntegration.integrationQuality && (
-                        <div className="p-3 rounded-lg bg-zinc-900/50 border border-zinc-800">
-                          <div className="text-zinc-400 text-xs mb-1">Integration Quality</div>
+                        <div className="p-3 rounded-lg bg-card/60 border border-border">
+                          <div className="text-muted-foreground text-xs mb-1">Integration Quality</div>
                           <div className={`text-lg font-semibold ${
                             agentInsights.extractor.codeIntegration.integrationQuality === 'good' ? 'text-emerald-400' :
                             agentInsights.extractor.codeIntegration.integrationQuality === 'fair' ? 'text-amber-400' :
@@ -1891,29 +1457,29 @@ export function SessionDetailView({
                 {/* Patterns */}
                 {agentInsights.extractor.patterns && (
                   <div>
-                    <h3 className="text-white font-semibold mb-3">Detected Patterns</h3>
+                    <h3 className="text-foreground font-semibold mb-3">Detected Patterns</h3>
                     <div className="space-y-3">
                       {agentInsights.extractor.patterns.copyPastePatterns && agentInsights.extractor.patterns.copyPastePatterns.length > 0 && (
                         <div>
-                          <h4 className="text-zinc-400 text-sm mb-2 flex items-center gap-2">
+                          <h4 className="text-muted-foreground text-sm mb-2 flex items-center gap-2">
                             <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
                             Copy-Paste Patterns ({agentInsights.extractor.patterns.copyPastePatterns.length})
                           </h4>
                           <div className="space-y-2">
                             {agentInsights.extractor.patterns.copyPastePatterns.map((pattern: any, i: number) => (
                               <div key={i} className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
-                                <div className="text-zinc-300 text-sm space-y-1">
+                                <div className="text-foreground/80 text-sm space-y-1">
                                   {pattern.type && (
-                                    <p><span className="text-zinc-400">Type:</span> {pattern.type}</p>
+                                    <p><span className="text-muted-foreground">Type:</span> {pattern.type}</p>
                                   )}
                                   {pattern.description && (
-                                    <p><span className="text-zinc-400">Description:</span> {pattern.description}</p>
+                                    <p><span className="text-muted-foreground">Description:</span> {pattern.description}</p>
                                   )}
                                   {pattern.confidence !== undefined && (
-                                    <p><span className="text-zinc-400">Confidence:</span> {Math.round(pattern.confidence * 100)}%</p>
+                                    <p><span className="text-muted-foreground">Confidence:</span> {pattern.confidence}%</p>
                                   )}
                                   {pattern.location && (
-                                    <p><span className="text-zinc-400">Location:</span> {pattern.location}</p>
+                                    <p><span className="text-muted-foreground">Location:</span> {pattern.location}</p>
                                   )}
                                   {!pattern.type && !pattern.description && (
                                     <pre className="text-xs whitespace-pre-wrap">{JSON.stringify(pattern, null, 2)}</pre>
@@ -1926,14 +1492,14 @@ export function SessionDetailView({
                       )}
                       {agentInsights.extractor.patterns.timingPatterns && (
                         <div>
-                          <h4 className="text-zinc-400 text-sm mb-2">Timing Patterns</h4>
-                          <div className="p-3 rounded-lg bg-zinc-900/50 border border-zinc-800">
-                            <div className="text-zinc-300 text-sm space-y-2">
+                          <h4 className="text-muted-foreground text-sm mb-2">Timing Patterns</h4>
+                          <div className="p-3 rounded-lg bg-card/60 border border-border">
+                            <div className="text-foreground/80 text-sm space-y-2">
                               {typeof agentInsights.extractor.patterns.timingPatterns === 'object' ? (
                                 Object.entries(agentInsights.extractor.patterns.timingPatterns).map(([key, value]: [string, any]) => (
                                   <div key={key}>
-                                    <span className="text-zinc-400">{key.replace(/_/g, ' ')}:</span>{' '}
-                                    <span className="text-white">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</span>
+                                    <span className="text-muted-foreground">{key.replace(/_/g, ' ')}:</span>{' '}
+                                    <span className="text-foreground">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</span>
                                   </div>
                                 ))
                               ) : (
@@ -1945,14 +1511,14 @@ export function SessionDetailView({
                       )}
                       {agentInsights.extractor.patterns.promptPatterns && (
                         <div>
-                          <h4 className="text-zinc-400 text-sm mb-2">Prompt Patterns</h4>
-                          <div className="p-3 rounded-lg bg-zinc-900/50 border border-zinc-800">
-                            <div className="text-zinc-300 text-sm space-y-2">
+                          <h4 className="text-muted-foreground text-sm mb-2">Prompt Patterns</h4>
+                          <div className="p-3 rounded-lg bg-card/60 border border-border">
+                            <div className="text-foreground/80 text-sm space-y-2">
                               {typeof agentInsights.extractor.patterns.promptPatterns === 'object' ? (
                                 Object.entries(agentInsights.extractor.patterns.promptPatterns).map(([key, value]: [string, any]) => (
                                   <div key={key}>
-                                    <span className="text-zinc-400">{key.replace(/_/g, ' ')}:</span>{' '}
-                                    <span className="text-white">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</span>
+                                    <span className="text-muted-foreground">{key.replace(/_/g, ' ')}:</span>{' '}
+                                    <span className="text-foreground">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</span>
                                   </div>
                                 ))
                               ) : (
@@ -1969,10 +1535,10 @@ export function SessionDetailView({
                 {/* Skills */}
                 {agentInsights.extractor.skills && (
                   <div>
-                    <h3 className="text-white font-semibold mb-3">Detected Skills</h3>
+                    <h3 className="text-foreground font-semibold mb-3">Detected Skills</h3>
                     <div className="flex flex-wrap gap-2">
                       {Object.entries(agentInsights.extractor.skills).map(([skill, level]: [string, any]) => (
-                        <Badge key={skill} className="bg-purple-500/20 text-purple-400">
+                        <Badge key={skill} className="bg-violet-500/20 text-violet-400">
                           {skill}: {level}
                         </Badge>
                       ))}
@@ -1982,16 +1548,16 @@ export function SessionDetailView({
 
                 {/* Explanation */}
                 {agentInsights.extractor.explanation && (
-                  <div className="p-4 rounded-lg bg-purple-500/10 border border-purple-500/30">
-                    <h3 className="text-purple-400 font-semibold mb-2">Analysis Explanation</h3>
-                    <p className="text-zinc-300 text-sm">{agentInsights.extractor.explanation}</p>
+                  <div className="p-4 rounded-lg bg-violet-500/10 border border-violet-500/30">
+                    <h3 className="text-violet-400 font-semibold mb-2">Analysis Explanation</h3>
+                    <p className="text-foreground/80 text-sm">{agentInsights.extractor.explanation}</p>
                   </div>
                 )}
 
                 {/* Confidence */}
                 {agentInsights.extractor.confidence !== undefined && (
-                  <div className="text-zinc-400 text-xs">
-                    Confidence: {Math.round(agentInsights.extractor.confidence * 100)}%
+                  <div className="text-muted-foreground text-xs">
+                    Confidence: {agentInsights.extractor.confidence}%
                   </div>
                 )}
               </CardContent>
@@ -2000,9 +1566,9 @@ export function SessionDetailView({
 
           {/* Agent 8: Sanity - Risk Assessment */}
           {agentInsights.sanity && (
-            <Card className="border-zinc-800 bg-zinc-950">
+            <Card className="border-border bg-background">
               <CardHeader>
-                <CardTitle className="text-white flex items-center gap-2">
+                <CardTitle className="text-foreground flex items-center gap-2">
                   <AlertTriangle className="h-5 w-5 text-red-400" />
                   Agent 8: Risk Assessor
                   <Badge className="ml-2 bg-red-500/20 text-red-400">Risk Agent</Badge>
@@ -2011,9 +1577,9 @@ export function SessionDetailView({
               <CardContent className="space-y-4">
                 {/* Risk Score */}
                 {agentInsights.sanity.riskScore !== undefined && (
-                  <div className="p-4 rounded-lg border border-zinc-800 bg-zinc-900/50">
+                  <div className="p-4 rounded-lg border border-border bg-card/60">
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-zinc-400 text-sm">Risk Score</span>
+                      <span className="text-muted-foreground text-sm">Risk Score</span>
                       <span className={`text-2xl font-bold ${
                         agentInsights.sanity.riskScore >= 70 ? 'text-red-400' :
                         agentInsights.sanity.riskScore >= 40 ? 'text-amber-400' :
@@ -2030,7 +1596,7 @@ export function SessionDetailView({
                         'bg-emerald-500/20'
                       }`}
                     />
-                    <p className="text-zinc-500 text-xs mt-2">
+                    <p className="text-muted-foreground/70 text-xs mt-2">
                       Higher score indicates higher risk of suspicious behavior
                     </p>
                   </div>
@@ -2039,7 +1605,7 @@ export function SessionDetailView({
                 {/* Red Flags */}
                 {agentInsights.sanity.redFlags && agentInsights.sanity.redFlags.length > 0 && (
                   <div>
-                    <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                    <h3 className="text-foreground font-semibold mb-3 flex items-center gap-2">
                       <AlertTriangle className="h-4 w-4 text-red-400" />
                       Red Flags ({agentInsights.sanity.redFlags.length})
                     </h3>
@@ -2048,23 +1614,23 @@ export function SessionDetailView({
                         <div key={i} className={`p-4 rounded-lg border ${
                           flag.severity === 'high' ? 'bg-red-500/10 border-red-500/30' :
                           flag.severity === 'medium' ? 'bg-amber-500/10 border-amber-500/30' :
-                          'bg-blue-500/10 border-blue-500/30'
+                          'bg-violet-500/10 border-violet-500/30'
                         }`}>
                           <div className="flex items-start justify-between">
                             <div className="flex-1">
                               <span className={`text-sm font-semibold ${
                                 flag.severity === 'high' ? 'text-red-400' :
                                 flag.severity === 'medium' ? 'text-amber-400' :
-                                'text-blue-400'
+                                'text-violet-400'
                               }`}>
                                 {flag.type?.replace(/_/g, ' ').toUpperCase() || 'Red Flag'}
                               </span>
-                              <p className="text-zinc-300 text-sm mt-1">{flag.description}</p>
+                              <p className="text-foreground/80 text-sm mt-1">{flag.description}</p>
                             </div>
                             <Badge className={
                               flag.severity === 'high' ? 'bg-red-500/20 text-red-400' :
                               flag.severity === 'medium' ? 'bg-amber-500/20 text-amber-400' :
-                              'bg-blue-500/20 text-blue-400'
+                              'bg-violet-500/20 text-violet-400'
                             }>
                               {flag.severity}
                             </Badge>
@@ -2078,11 +1644,11 @@ export function SessionDetailView({
                 {/* Anomalies */}
                 {agentInsights.sanity.anomalies && agentInsights.sanity.anomalies.length > 0 && (
                   <div>
-                    <h3 className="text-white font-semibold mb-3">Anomalies Detected</h3>
+                    <h3 className="text-foreground font-semibold mb-3">Anomalies Detected</h3>
                     <div className="space-y-2">
                       {agentInsights.sanity.anomalies.map((anomaly: any, i: number) => (
                         <div key={i} className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
-                          <p className="text-zinc-300 text-sm">{JSON.stringify(anomaly, null, 2)}</p>
+                          <p className="text-foreground/80 text-sm">{JSON.stringify(anomaly, null, 2)}</p>
                         </div>
                       ))}
                     </div>
@@ -2092,7 +1658,7 @@ export function SessionDetailView({
                 {/* Plagiarism Analysis */}
                 {agentInsights.sanity.plagiarismAnalysis && (
                   <div>
-                    <h3 className="text-white font-semibold mb-3">Plagiarism Analysis</h3>
+                    <h3 className="text-foreground font-semibold mb-3">Plagiarism Analysis</h3>
                     <div className={`p-4 rounded-lg border ${
                       agentInsights.sanity.plagiarismAnalysis.suspicious 
                         ? 'bg-red-500/10 border-red-500/30' 
@@ -2121,7 +1687,7 @@ export function SessionDetailView({
                               ? 'bg-red-500/20 text-red-400'
                               : 'bg-emerald-500/20 text-emerald-400'
                           }>
-                            Confidence: {Math.round(agentInsights.sanity.plagiarismAnalysis.confidence * 100)}%
+                            Confidence: {agentInsights.sanity.plagiarismAnalysis.confidence}%
                           </Badge>
                         )}
                       </div>
@@ -2131,27 +1697,27 @@ export function SessionDetailView({
                        Array.isArray(agentInsights.sanity.plagiarismAnalysis.patterns) && 
                        agentInsights.sanity.plagiarismAnalysis.patterns.length > 0 && (
                         <div className="mt-4">
-                          <h4 className="text-white font-semibold text-sm mb-2">
+                          <h4 className="text-foreground font-semibold text-sm mb-2">
                             Detected Patterns ({agentInsights.sanity.plagiarismAnalysis.patterns.length})
                           </h4>
                           <div className="space-y-2">
                             {agentInsights.sanity.plagiarismAnalysis.patterns.map((pattern: any, index: number) => (
-                              <div key={index} className="p-3 rounded-lg bg-zinc-900/50 border border-zinc-800">
-                                <div className="text-zinc-300 text-sm space-y-1">
+                              <div key={index} className="p-3 rounded-lg bg-card/60 border border-border">
+                                <div className="text-foreground/80 text-sm space-y-1">
                                   {pattern.type && (
-                                    <p><span className="text-zinc-400">Type:</span> {pattern.type}</p>
+                                    <p><span className="text-muted-foreground">Type:</span> {pattern.type}</p>
                                   )}
                                   {pattern.description && (
-                                    <p><span className="text-zinc-400">Description:</span> {pattern.description}</p>
+                                    <p><span className="text-muted-foreground">Description:</span> {pattern.description}</p>
                                   )}
                                   {pattern.source && (
-                                    <p><span className="text-zinc-400">Source:</span> {pattern.source}</p>
+                                    <p><span className="text-muted-foreground">Source:</span> {pattern.source}</p>
                                   )}
                                   {pattern.similarity !== undefined && (
-                                    <p><span className="text-zinc-400">Similarity:</span> {Math.round(pattern.similarity * 100)}%</p>
+                                    <p><span className="text-muted-foreground">Similarity:</span> {Math.round(pattern.similarity * 100)}%</p>
                                   )}
                                   {pattern.confidence !== undefined && (
-                                    <p><span className="text-zinc-400">Confidence:</span> {Math.round(pattern.confidence * 100)}%</p>
+                                    <p><span className="text-muted-foreground">Confidence:</span> {pattern.confidence}%</p>
                                   )}
                                 </div>
                               </div>
@@ -2164,7 +1730,7 @@ export function SessionDetailView({
                       {(!agentInsights.sanity.plagiarismAnalysis.patterns || 
                         (Array.isArray(agentInsights.sanity.plagiarismAnalysis.patterns) && 
                          agentInsights.sanity.plagiarismAnalysis.patterns.length === 0)) && (
-                        <div className="mt-2 text-zinc-400 text-sm">
+                        <div className="mt-2 text-muted-foreground text-sm">
                           {agentInsights.sanity.plagiarismAnalysis.suspicious 
                             ? 'No specific patterns identified, but suspicious activity was detected.' 
                             : 'No suspicious patterns or plagiarism indicators found in the code.'}
@@ -2173,12 +1739,12 @@ export function SessionDetailView({
                       
                       {/* Additional metadata if present */}
                       {agentInsights.sanity.plagiarismAnalysis.metadata && (
-                        <div className="mt-4 pt-4 border-t border-zinc-800">
-                          <h4 className="text-zinc-400 text-xs mb-2">Additional Information</h4>
-                          <div className="text-zinc-500 text-xs space-y-1">
+                        <div className="mt-4 pt-4 border-t border-border">
+                          <h4 className="text-muted-foreground text-xs mb-2">Additional Information</h4>
+                          <div className="text-muted-foreground/70 text-xs space-y-1">
                             {Object.entries(agentInsights.sanity.plagiarismAnalysis.metadata).map(([key, value]: [string, any]) => (
                               <div key={key}>
-                                <span className="text-zinc-400">{key.replace(/_/g, ' ')}:</span>{' '}
+                                <span className="text-muted-foreground">{key.replace(/_/g, ' ')}:</span>{' '}
                                 {typeof value === 'object' ? JSON.stringify(value) : String(value)}
                               </div>
                             ))}
@@ -2190,22 +1756,35 @@ export function SessionDetailView({
                 )}
 
                 {/* Sanity Checks */}
-                {agentInsights.sanity.sanityChecks && (
+                {agentInsights.sanity.sanityChecks && agentInsights.sanity.sanityChecks.length > 0 && (
                   <div>
-                    <h3 className="text-white font-semibold mb-3">Sanity Checks</h3>
+                    <h3 className="text-foreground font-semibold mb-3">Sanity Checks</h3>
                     <div className="space-y-2">
-                      {Object.entries(agentInsights.sanity.sanityChecks).map(([check, result]: [string, any]) => (
-                        <div key={check} className="flex items-center justify-between p-3 rounded-lg bg-zinc-900/50 border border-zinc-800">
-                          <span className="text-zinc-300 text-sm">{check.replace(/_/g, ' ')}</span>
-                          <Badge className={
-                            result === true || result === 'pass' ? 'bg-emerald-500/20 text-emerald-400' :
-                            result === false || result === 'fail' ? 'bg-red-500/20 text-red-400' :
-                            'bg-amber-500/20 text-amber-400'
-                          }>
-                            {result === true ? 'PASS' : result === false ? 'FAIL' : String(result)}
-                          </Badge>
-                        </div>
-                      ))}
+                      {(Array.isArray(agentInsights.sanity.sanityChecks)
+                        ? agentInsights.sanity.sanityChecks
+                        : Object.entries(agentInsights.sanity.sanityChecks).map(([k, v]) => ({ check: k, status: v, message: '' }))
+                      ).map((item: any, idx: number) => {
+                        const checkName = item.check ?? item.name ?? String(idx);
+                        const status = item.status ?? item.result;
+                        const message = item.message ?? item.description ?? '';
+                        const isPassed = status === 'passed' || status === true || status === 'pass';
+                        const isFailed = status === 'failed' || status === false || status === 'fail';
+                        return (
+                          <div key={idx} className="flex items-center justify-between p-3 rounded-lg bg-card/60 border border-border">
+                            <div>
+                              <span className="text-foreground/80 text-sm">{checkName.replace(/_/g, ' ')}</span>
+                              {message && <p className="text-muted-foreground/70 text-xs mt-0.5">{message}</p>}
+                            </div>
+                            <Badge className={
+                              isPassed ? 'bg-emerald-500/20 text-emerald-400' :
+                              isFailed ? 'bg-red-500/20 text-red-400' :
+                              'bg-amber-500/20 text-amber-400'
+                            }>
+                              {isPassed ? 'PASS' : isFailed ? 'FAIL' : String(status)}
+                            </Badge>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -2214,14 +1793,226 @@ export function SessionDetailView({
                 {agentInsights.sanity.explanation && (
                   <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/30">
                     <h3 className="text-red-400 font-semibold mb-2">Risk Assessment Explanation</h3>
-                    <p className="text-zinc-300 text-sm">{agentInsights.sanity.explanation}</p>
+                    <p className="text-foreground/80 text-sm">{agentInsights.sanity.explanation}</p>
                   </div>
                 )}
 
                 {/* Confidence */}
                 {agentInsights.sanity.confidence !== undefined && (
-                  <div className="text-zinc-400 text-xs">
-                    Confidence: {Math.round(agentInsights.sanity.confidence * 100)}%
+                  <div className="text-muted-foreground text-xs">
+                    Confidence: {agentInsights.sanity.confidence}%
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Candidate Fit Summary - Metrics + Fit assessment for recruiters */}
+          {(agentInsights.judge || agentInsights.metrics) && (
+            <Card className="border-border bg-background">
+              <CardHeader>
+                <CardTitle className="text-foreground flex items-center gap-2">
+                  <CheckCircle className="h-5 w-5 text-emerald-400" />
+                  Candidate Fit Summary
+                </CardTitle>
+                <p className="text-muted-foreground/70 text-sm font-normal mt-1">
+                  How is this candidate a good fit? Metrics and assessment from AI usage analysis
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {agentInsights.judge?.candidate_fit_summary && (
+                  <div className="p-4 rounded-lg border border-border bg-card/60">
+                    <p className="text-foreground/80 text-sm">{agentInsights.judge.candidate_fit_summary}</p>
+                  </div>
+                )}
+                {/* Primary scores row */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {(agentInsights.metrics?.promptIQ ?? agentInsights.metrics?.promptQuality) !== undefined && (
+                    <div className="p-3 rounded-lg border border-border bg-card/60">
+                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-1">Prompt IQ</div>
+                      <div className={`text-xl font-bold ${
+                        (agentInsights.metrics!.promptIQ ?? agentInsights.metrics!.promptQuality) >= 70 ? 'text-emerald-400' :
+                        (agentInsights.metrics!.promptIQ ?? agentInsights.metrics!.promptQuality) >= 40 ? 'text-amber-400' : 'text-red-400'
+                      }`}>{agentInsights.metrics!.promptIQ ?? agentInsights.metrics!.promptQuality}/100</div>
+                      <Progress value={agentInsights.metrics!.promptIQ ?? agentInsights.metrics!.promptQuality} className="h-1.5 mt-1" />
+                    </div>
+                  )}
+                  {agentInsights.metrics?.selfReliance !== undefined && (
+                    <div className="p-3 rounded-lg border border-border bg-card/60">
+                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-1">Self Reliance</div>
+                      <div className={`text-xl font-bold ${
+                        agentInsights.metrics.selfReliance >= 70 ? 'text-emerald-400' :
+                        agentInsights.metrics.selfReliance >= 40 ? 'text-amber-400' : 'text-red-400'
+                      }`}>{agentInsights.metrics.selfReliance}/100</div>
+                      <Progress value={agentInsights.metrics.selfReliance} className="h-1.5 mt-1" />
+                    </div>
+                  )}
+                  {agentInsights.judge?.ai_usage_quality_score !== undefined && (
+                    <div className="p-3 rounded-lg border border-border bg-card/60">
+                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-1">AI Usage Quality</div>
+                      <div className={`text-xl font-bold ${
+                        agentInsights.judge.ai_usage_quality_score >= 7 ? 'text-emerald-400' :
+                        agentInsights.judge.ai_usage_quality_score >= 4 ? 'text-amber-400' : 'text-red-400'
+                      }`}>{agentInsights.judge.ai_usage_quality_score}/10</div>
+                      <Progress value={(agentInsights.judge.ai_usage_quality_score / 10) * 100} className="h-1.5 mt-1" />
+                    </div>
+                  )}
+                  {agentInsights.judge?.integrity_verdict && (
+                    <div className="p-3 rounded-lg border border-border bg-card/60 flex flex-col justify-center">
+                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-1">Integrity</div>
+                      <Badge className={`w-fit ${
+                        agentInsights.judge.integrity_verdict === 'pass' ? 'bg-emerald-500/20 text-emerald-400' :
+                        agentInsights.judge.integrity_verdict === 'warn' ? 'bg-amber-500/20 text-amber-400' :
+                        'bg-red-500/20 text-red-400'
+                      }`}>
+                        {agentInsights.judge.integrity_verdict.toUpperCase()}
+                      </Badge>
+                    </div>
+                  )}
+                </div>
+
+                {/* Activity counters */}
+                {agentInsights.metrics && (
+                  <div className="flex flex-wrap gap-4 text-xs text-muted-foreground/70">
+                    {agentInsights.metrics.promptCount !== undefined && (
+                      <span>AI prompts: <span className="text-foreground/80">{agentInsights.metrics.promptCount}</span></span>
+                    )}
+                    {agentInsights.metrics.copyCount !== undefined && (
+                      <span>Copy/paste: <span className="text-foreground/80">{agentInsights.metrics.copyCount}</span></span>
+                    )}
+                    {agentInsights.metrics.applyCount !== undefined && (
+                      <span>AI code applied: <span className="text-foreground/80">{agentInsights.metrics.applyCount}</span></span>
+                    )}
+                    {agentInsights.metrics.modelSwitches !== undefined && (
+                      <span>Model switches: <span className="text-foreground/80">{agentInsights.metrics.modelSwitches}</span></span>
+                    )}
+                    {agentInsights.metrics.totalTokens !== undefined && agentInsights.metrics.totalTokens > 0 && (
+                      <span>Total tokens: <span className="text-foreground/80">{agentInsights.metrics.totalTokens.toLocaleString()}</span></span>
+                    )}
+                  </div>
+                )}
+
+                {/* Per-model token breakdown */}
+                {agentInsights.metrics?.modelBreakdown && agentInsights.metrics.modelBreakdown.length > 0 && (
+                  <div>
+                    <h4 className="text-muted-foreground text-xs uppercase tracking-wide mb-2">Model Usage Breakdown</h4>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-muted-foreground/70 border-b border-border">
+                            <th className="text-left py-1.5 pr-4 font-normal">Model</th>
+                            <th className="text-right py-1.5 pr-4 font-normal">Prompts</th>
+                            <th className="text-right py-1.5 pr-4 font-normal">Input tokens</th>
+                            <th className="text-right py-1.5 pr-4 font-normal">Output tokens</th>
+                            <th className="text-right py-1.5 font-normal">Avg latency</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {agentInsights.metrics.modelBreakdown.map((m, i) => (
+                            <tr key={i} className="border-b border-border/50 text-foreground/80">
+                              <td className="py-1.5 pr-4 font-mono text-foreground">{m.model}</td>
+                              <td className="text-right py-1.5 pr-4">{m.promptCount}</td>
+                              <td className="text-right py-1.5 pr-4">{m.promptTokens.toLocaleString()}</td>
+                              <td className="text-right py-1.5 pr-4">{m.completionTokens.toLocaleString()}</td>
+                              <td className="text-right py-1.5">{m.avgLatencyMs > 0 ? `${(m.avgLatencyMs / 1000).toFixed(1)}s` : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Gemini Video Analysis */}
+          {agentInsights.geminiVideoAnalysis && (
+            <Card className="border-border bg-background">
+              <CardHeader>
+                <CardTitle className="text-foreground flex items-center gap-2">
+                  <Monitor className="h-5 w-5 text-violet-400" />
+                  Screenshare Analysis
+                  <Badge className={`ml-2 ${
+                    agentInsights.geminiVideoAnalysis.overallVerdict === 'focused' ? 'bg-emerald-500/20 text-emerald-400' :
+                    agentInsights.geminiVideoAnalysis.overallVerdict === 'somewhat_distracted' ? 'bg-amber-500/20 text-amber-400' :
+                    'bg-red-500/20 text-red-400'
+                  }`}>
+                    {agentInsights.geminiVideoAnalysis.overallVerdict.replace(/_/g, ' ').toUpperCase()}
+                  </Badge>
+                  <Badge className="ml-1 bg-muted/70 text-muted-foreground">
+                    {agentInsights.geminiVideoAnalysis.confidence} confidence
+                  </Badge>
+                </CardTitle>
+                <p className="text-muted-foreground/70 text-sm font-normal mt-1">
+                  AI analysis of {agentInsights.geminiVideoAnalysis.framesAnalyzed} frames from {agentInsights.geminiVideoAnalysis.totalChunks} recording chunks
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Summary */}
+                <div className="p-4 rounded-lg border border-violet-500/20 bg-violet-500/5">
+                  <p className="text-foreground/80 text-sm leading-relaxed">{agentInsights.geminiVideoAnalysis.summary}</p>
+                </div>
+
+                {/* Two-column: time on task + coding behavior */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="p-3 rounded-lg bg-card/60 border border-border">
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-1">Time on Task</div>
+                    <div className="text-xl font-bold text-emerald-400">{agentInsights.geminiVideoAnalysis.timeOnTask}</div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-card/60 border border-border">
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-1">Coding Behavior</div>
+                    <div className="text-sm text-foreground leading-snug">{agentInsights.geminiVideoAnalysis.codingBehavior}</div>
+                  </div>
+                </div>
+
+                {/* Tools observed */}
+                {agentInsights.geminiVideoAnalysis.toolsObserved.length > 0 && (
+                  <div>
+                    <h4 className="text-muted-foreground text-xs uppercase tracking-wide mb-2">Tools &amp; Sites Observed</h4>
+                    <div className="flex flex-wrap gap-1.5">
+                      {agentInsights.geminiVideoAnalysis.toolsObserved.map((tool, i) => (
+                        <Badge key={i} className="bg-muted text-foreground/80">{tool}</Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Suspicious activity */}
+                {agentInsights.geminiVideoAnalysis.suspiciousActivity.length > 0 && (
+                  <div>
+                    <h4 className="text-red-400 text-xs uppercase tracking-wide mb-2 flex items-center gap-1">
+                      <AlertTriangle className="h-3 w-3" />
+                      Suspicious Activity ({agentInsights.geminiVideoAnalysis.suspiciousActivity.length})
+                    </h4>
+                    <div className="space-y-2">
+                      {agentInsights.geminiVideoAnalysis.suspiciousActivity.map((item, i) => (
+                        <div key={i} className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-sm text-foreground/80">
+                          {item}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {agentInsights.geminiVideoAnalysis.suspiciousActivity.length === 0 && (
+                  <div className="flex items-center gap-2 text-emerald-400 text-sm">
+                    <CheckCircle className="h-4 w-4" />
+                    No suspicious activity detected
+                  </div>
+                )}
+
+                {/* Key moments timeline */}
+                {agentInsights.geminiVideoAnalysis.keyMoments.length > 0 && (
+                  <div>
+                    <h4 className="text-muted-foreground text-xs uppercase tracking-wide mb-2">Key Moments</h4>
+                    <div className="space-y-2">
+                      {agentInsights.geminiVideoAnalysis.keyMoments.map((moment, i) => (
+                        <div key={i} className="flex items-start gap-3 p-2 rounded-lg bg-card/60 border border-border">
+                          <span className="text-violet-400 text-xs font-mono shrink-0 mt-0.5">{moment.timestamp}</span>
+                          <span className="text-foreground/80 text-sm">{moment.observation}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </CardContent>
@@ -2230,8 +2021,8 @@ export function SessionDetailView({
 
           {/* No Agent Insights Available */}
           {!agentInsights.watcher && !agentInsights.extractor && !agentInsights.sanity && (
-            <Card className="border-zinc-800 bg-zinc-950">
-              <CardContent className="p-6 text-zinc-400 text-center">
+            <Card className="border-border bg-background">
+              <CardContent className="p-6 text-muted-foreground text-center">
                 No agent insights available for this session. Agent analysis may still be processing.
               </CardContent>
             </Card>
@@ -2243,8 +2034,8 @@ export function SessionDetailView({
       {activeTab === 'recordings' && !isCandidateView && (
         <div className="space-y-6">
           {normalizedVideoChunks.length === 0 ? (
-            <Card className="border-zinc-800 bg-zinc-950">
-              <CardContent className="p-6 text-zinc-400 text-center">
+            <Card className="border-border bg-background">
+              <CardContent className="p-6 text-muted-foreground text-center">
                 No recordings available for this session.
               </CardContent>
             </Card>
@@ -2255,23 +2046,55 @@ export function SessionDetailView({
                 // Use streamType field first, then fall back to URL
                 return c.streamType === 'webcam' || (!c.streamType && c.url?.includes('/webcam/'));
               }).length > 0 && (
-                <Card className="border-zinc-800 bg-zinc-950">
+                <Card className="border-border bg-background">
                   <CardHeader>
-                    <CardTitle className="text-white flex items-center gap-2">
+                    <CardTitle className="text-foreground flex items-center gap-2">
                       <Video className="h-4 w-4" />
                       Webcam Recording
-                      <span className="text-xs text-zinc-400 ml-2">
+                      <span className="text-xs text-muted-foreground ml-2">
                         ({normalizedVideoChunks.filter(c => c.streamType === 'webcam' || (!c.streamType && c.url?.includes('/webcam/'))).length} chunks)
                       </span>
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <video
-                      ref={webcamVideoRef}
-                      controls
-                      className="w-full bg-black rounded-lg"
-                      style={{ maxHeight: '600px' }}
-                    />
+                    {webcamLoading && (
+                      <div className="flex flex-col items-center justify-center py-10 gap-3">
+                        <div className="w-10 h-10 rounded-full border-2 border-border border-t-white animate-spin" />
+                        <p className="text-muted-foreground text-sm">
+                          Loading recording… {webcamLoading.done}/{webcamLoading.total} chunks
+                        </p>
+                        <div className="w-48 h-1.5 bg-muted rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-violet-500 transition-all duration-200"
+                            style={{ width: `${Math.round((webcamLoading.done / webcamLoading.total) * 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    {!webcamLoading && webcamBlobUrl && (
+                      <video
+                        src={webcamBlobUrl}
+                        controls
+                        preload="auto"
+                        className="w-full bg-black rounded-lg object-contain"
+                        style={{ height: '360px' }}
+                        onLoadedMetadata={(e) => {
+                          // MediaRecorder WebM has no Duration element — browser reports Infinity.
+                          // Seeking to a huge time forces Chrome to scan to end and discover real duration.
+                          const v = e.currentTarget
+                          if (!isFinite(v.duration)) {
+                            const snapBack = () => { v.currentTime = 0; v.removeEventListener('seeked', snapBack) }
+                            v.addEventListener('seeked', snapBack)
+                            v.currentTime = 1e9
+                          }
+                        }}
+                      />
+                    )}
+                    {!webcamLoading && !webcamBlobUrl && (
+                      <div className="flex items-center justify-center py-10 text-muted-foreground/70 text-sm">
+                        Could not load webcam recording.
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               )}
@@ -2281,23 +2104,55 @@ export function SessionDetailView({
                 // Use streamType field first, then fall back to URL
                 return c.streamType === 'screenshare' || (!c.streamType && c.url?.includes('/screenshare/'));
               }).length > 0 && (
-                <Card className="border-zinc-800 bg-zinc-950">
+                <Card className="border-border bg-background">
                   <CardHeader>
-                    <CardTitle className="text-white flex items-center gap-2">
+                    <CardTitle className="text-foreground flex items-center gap-2">
                       <Monitor className="h-4 w-4" />
                       Screen Share Recording
-                      <span className="text-xs text-zinc-400 ml-2">
+                      <span className="text-xs text-muted-foreground ml-2">
                         ({normalizedVideoChunks.filter(c => c.streamType === 'screenshare' || (!c.streamType && c.url?.includes('/screenshare/'))).length} chunks)
                       </span>
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <video
-                      ref={screenshareVideoRef}
-                      controls
-                      className="w-full bg-black rounded-lg"
-                      style={{ maxHeight: '600px' }}
-                    />
+                    {screenshareLoading && (
+                      <div className="flex flex-col items-center justify-center py-10 gap-3">
+                        <div className="w-10 h-10 rounded-full border-2 border-border border-t-white animate-spin" />
+                        <p className="text-muted-foreground text-sm">
+                          Loading recording… {screenshareLoading.done}/{screenshareLoading.total} chunks
+                        </p>
+                        <div className="w-48 h-1.5 bg-muted rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-violet-500 transition-all duration-200"
+                            style={{ width: `${Math.round((screenshareLoading.done / screenshareLoading.total) * 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    {!screenshareLoading && screenshareBlobUrl && (
+                      <video
+                        src={screenshareBlobUrl}
+                        controls
+                        preload="auto"
+                        className="w-full bg-black rounded-lg object-contain"
+                        style={{ height: '360px' }}
+                        onLoadedMetadata={(e) => {
+                          const v = e.currentTarget
+                          if (!isFinite(v.duration)) { v.currentTime = 1e9 }
+                        }}
+                        onTimeUpdate={(e) => {
+                          const v = e.currentTarget
+                          if (isFinite(v.duration) && v.currentTime > v.duration - 0.1) {
+                            v.currentTime = 0
+                          }
+                        }}
+                      />
+                    )}
+                    {!screenshareLoading && !screenshareBlobUrl && (
+                      <div className="flex items-center justify-center py-10 text-muted-foreground/70 text-sm">
+                        Could not load screen share recording.
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               )}
@@ -2310,30 +2165,30 @@ export function SessionDetailView({
       {activeTab === 'my-insights' && isCandidateView && agentInsights && (
         <div className="space-y-6">
           <div className="mb-6">
-            <h2 className="text-2xl font-bold text-white mb-2">My Performance Insights</h2>
-            <p className="text-zinc-400 text-sm">
+            <h2 className="text-2xl font-bold text-foreground mb-2">My Performance Insights</h2>
+            <p className="text-muted-foreground text-sm">
               Here's how you used AI assistance and some tips for improvement
             </p>
           </div>
 
           {/* Prompt Behavior - How candidate used AI */}
           {agentInsights.extractor && (
-            <Card className="border-zinc-800 bg-zinc-950">
+            <Card className="border-border bg-background">
               <CardHeader>
-                <CardTitle className="text-white flex items-center gap-2">
-                  <MessageSquare className="h-5 w-5 text-blue-400" />
+                <CardTitle className="text-foreground flex items-center gap-2">
+                  <MessageSquare className="h-5 w-5 text-violet-400" />
                   AI Assistance Usage
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 {/* AI Interaction Summary */}
                 {aiInteractions && aiInteractions.length > 0 && (
-                  <div className="p-4 rounded-lg border border-zinc-800 bg-zinc-900/50">
+                  <div className="p-4 rounded-lg border border-border bg-card/60">
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-zinc-400 text-sm">Total AI Requests</span>
-                      <span className="text-2xl font-bold text-white">{aiInteractions.length}</span>
+                      <span className="text-muted-foreground text-sm">Total AI Requests</span>
+                      <span className="text-2xl font-bold text-foreground">{aiInteractions.length}</span>
                     </div>
-                    <p className="text-zinc-500 text-xs mt-2">
+                    <p className="text-muted-foreground/70 text-xs mt-2">
                       You asked for AI help {aiInteractions.length} time{aiInteractions.length !== 1 ? 's' : ''} during this assessment
                     </p>
                   </div>
@@ -2342,20 +2197,20 @@ export function SessionDetailView({
                 {/* Prompt Patterns - Simplified */}
                 {agentInsights.extractor.patterns?.promptPatterns && (
                   <div>
-                    <h3 className="text-white font-semibold mb-3 text-sm">Prompt Patterns</h3>
+                    <h3 className="text-foreground font-semibold mb-3 text-sm">Prompt Patterns</h3>
                     <div className="space-y-2">
                       {typeof agentInsights.extractor.patterns.promptPatterns === 'object' ? (
                         Object.entries(agentInsights.extractor.patterns.promptPatterns).slice(0, 5).map(([key, value]: [string, any]) => (
-                          <div key={key} className="p-3 rounded-lg bg-zinc-900/50 border border-zinc-800">
-                            <div className="text-zinc-300 text-sm">
-                              <span className="text-zinc-400 capitalize">{key.replace(/_/g, ' ')}:</span>{' '}
-                              <span className="text-white">{typeof value === 'object' ? JSON.stringify(value).substring(0, 50) + '...' : String(value)}</span>
+                          <div key={key} className="p-3 rounded-lg bg-card/60 border border-border">
+                            <div className="text-foreground/80 text-sm">
+                              <span className="text-muted-foreground capitalize">{key.replace(/_/g, ' ')}:</span>{' '}
+                              <span className="text-foreground">{typeof value === 'object' ? JSON.stringify(value).substring(0, 50) + '...' : String(value)}</span>
                             </div>
                           </div>
                         ))
                       ) : (
-                        <div className="p-3 rounded-lg bg-zinc-900/50 border border-zinc-800">
-                          <p className="text-zinc-300 text-sm">{String(agentInsights.extractor.patterns.promptPatterns).substring(0, 200)}</p>
+                        <div className="p-3 rounded-lg bg-card/60 border border-border">
+                          <p className="text-foreground/80 text-sm">{String(agentInsights.extractor.patterns.promptPatterns).substring(0, 200)}</p>
                         </div>
                       )}
                     </div>
@@ -2364,9 +2219,9 @@ export function SessionDetailView({
 
                 {/* Behavior Score - Simplified */}
                 {agentInsights.extractor.behaviorScore !== undefined && (
-                  <div className="p-4 rounded-lg border border-zinc-800 bg-zinc-900/50">
+                  <div className="p-4 rounded-lg border border-border bg-card/60">
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-zinc-400 text-sm">Code Quality Score</span>
+                      <span className="text-muted-foreground text-sm">Code Quality Score</span>
                       <span className={`text-2xl font-bold ${
                         agentInsights.extractor.behaviorScore >= 70 ? 'text-emerald-400' :
                         agentInsights.extractor.behaviorScore >= 40 ? 'text-amber-400' :
@@ -2383,7 +2238,7 @@ export function SessionDetailView({
                         'bg-red-500/20'
                       }`}
                     />
-                    <p className="text-zinc-500 text-xs mt-2">
+                    <p className="text-muted-foreground/70 text-xs mt-2">
                       {agentInsights.extractor.behaviorScore >= 70 
                         ? 'Great job! Your code quality is excellent.'
                         : agentInsights.extractor.behaviorScore >= 40
@@ -2398,9 +2253,9 @@ export function SessionDetailView({
 
           {/* Minor Mistakes & Improvements */}
           {agentInsights.extractor && (
-            <Card className="border-zinc-800 bg-zinc-950">
+            <Card className="border-border bg-background">
               <CardHeader>
-                <CardTitle className="text-white flex items-center gap-2">
+                <CardTitle className="text-foreground flex items-center gap-2">
                   <AlertTriangle className="h-5 w-5 text-amber-400" />
                   Areas for Improvement
                 </CardTitle>
@@ -2409,16 +2264,16 @@ export function SessionDetailView({
                 {/* Code Quality Issues - Simplified */}
                 {agentInsights.extractor.codeQuality && (
                   <div>
-                    <h3 className="text-white font-semibold mb-3 text-sm">Code Quality</h3>
+                    <h3 className="text-foreground font-semibold mb-3 text-sm">Code Quality</h3>
                     <div className="space-y-2">
                       {agentInsights.extractor.codeQuality.totalLines !== undefined && (
-                        <div className="p-3 rounded-lg bg-zinc-900/50 border border-zinc-800">
+                        <div className="p-3 rounded-lg bg-card/60 border border-border">
                           <div className="flex items-center justify-between">
-                            <span className="text-zinc-400 text-sm">Lines of Code</span>
-                            <span className="text-white font-semibold">{agentInsights.extractor.codeQuality.totalLines}</span>
+                            <span className="text-muted-foreground text-sm">Lines of Code</span>
+                            <span className="text-foreground font-semibold">{agentInsights.extractor.codeQuality.totalLines}</span>
                           </div>
                           {agentInsights.extractor.codeQuality.commentRatio !== undefined && (
-                            <p className="text-zinc-500 text-xs mt-2">
+                            <p className="text-muted-foreground/70 text-xs mt-2">
                               Comment ratio: {Math.round(agentInsights.extractor.codeQuality.commentRatio * 100)}%
                               {agentInsights.extractor.codeQuality.commentRatio < 0.1 && (
                                 <span className="text-amber-400 ml-2">💡 Tip: Add more comments to explain your code</span>
@@ -2428,19 +2283,19 @@ export function SessionDetailView({
                         </div>
                       )}
                       {agentInsights.extractor.codeQuality.complexity && (
-                        <div className="p-3 rounded-lg bg-zinc-900/50 border border-zinc-800">
+                        <div className="p-3 rounded-lg bg-card/60 border border-border">
                           <div className="flex items-center justify-between">
-                            <span className="text-zinc-400 text-sm">Code Complexity</span>
+                            <span className="text-muted-foreground text-sm">Code Complexity</span>
                             <span className={`font-semibold ${
                               agentInsights.extractor.codeQuality.complexity === 'high' ? 'text-amber-400' :
-                              agentInsights.extractor.codeQuality.complexity === 'medium' ? 'text-blue-400' :
+                              agentInsights.extractor.codeQuality.complexity === 'medium' ? 'text-violet-400' :
                               'text-emerald-400'
                             }`}>
                               {agentInsights.extractor.codeQuality.complexity?.toUpperCase() || 'N/A'}
                             </span>
                           </div>
                           {agentInsights.extractor.codeQuality.complexity === 'high' && (
-                            <p className="text-zinc-500 text-xs mt-2">
+                            <p className="text-muted-foreground/70 text-xs mt-2">
                               💡 Tip: Consider breaking down complex functions into smaller, more manageable pieces
                             </p>
                           )}
@@ -2453,16 +2308,16 @@ export function SessionDetailView({
                 {/* Code Integration Issues - Simplified */}
                 {agentInsights.extractor.codeIntegration && (
                   <div>
-                    <h3 className="text-white font-semibold mb-3 text-sm">Code Integration</h3>
+                    <h3 className="text-foreground font-semibold mb-3 text-sm">Code Integration</h3>
                     <div className="space-y-2">
                       {agentInsights.extractor.codeIntegration.modifications !== undefined && (
-                        <div className="p-3 rounded-lg bg-zinc-900/50 border border-zinc-800">
+                        <div className="p-3 rounded-lg bg-card/60 border border-border">
                           <div className="flex items-center justify-between">
-                            <span className="text-zinc-400 text-sm">Code Modifications</span>
-                            <span className="text-white font-semibold">{agentInsights.extractor.codeIntegration.modifications}</span>
+                            <span className="text-muted-foreground text-sm">Code Modifications</span>
+                            <span className="text-foreground font-semibold">{agentInsights.extractor.codeIntegration.modifications}</span>
                           </div>
                           {agentInsights.extractor.codeIntegration.integrationQuality && (
-                            <p className="text-zinc-500 text-xs mt-2">
+                            <p className="text-muted-foreground/70 text-xs mt-2">
                               Integration quality: <span className={`${
                                 agentInsights.extractor.codeIntegration.integrationQuality === 'good' ? 'text-emerald-400' :
                                 agentInsights.extractor.codeIntegration.integrationQuality === 'fair' ? 'text-amber-400' :
@@ -2485,7 +2340,7 @@ export function SessionDetailView({
                 {agentInsights.extractor.patterns?.copyPastePatterns && 
                  agentInsights.extractor.patterns.copyPastePatterns.length > 0 && (
                   <div>
-                    <h3 className="text-white font-semibold mb-3 text-sm flex items-center gap-2">
+                    <h3 className="text-foreground font-semibold mb-3 text-sm flex items-center gap-2">
                       <AlertTriangle className="h-4 w-4 text-amber-400" />
                       Code Patterns Detected
                     </h3>
@@ -2493,7 +2348,7 @@ export function SessionDetailView({
                       <p className="text-amber-400 text-sm font-semibold mb-2">
                         {agentInsights.extractor.patterns.copyPastePatterns.length} pattern{agentInsights.extractor.patterns.copyPastePatterns.length !== 1 ? 's' : ''} detected
                       </p>
-                      <p className="text-zinc-300 text-sm">
+                      <p className="text-foreground/80 text-sm">
                         💡 Tip: While copying code can be helpful for learning, try to understand and modify it to fit your specific needs. 
                         Writing code from scratch helps build deeper understanding.
                       </p>
@@ -2503,9 +2358,9 @@ export function SessionDetailView({
 
                 {/* General Feedback */}
                 {agentInsights.extractor.explanation && (
-                  <div className="p-4 rounded-lg bg-blue-500/10 border border-blue-500/30">
-                    <h3 className="text-blue-400 font-semibold mb-2 text-sm">Feedback</h3>
-                    <p className="text-zinc-300 text-sm">{agentInsights.extractor.explanation}</p>
+                  <div className="p-4 rounded-lg bg-violet-500/10 border border-violet-500/30">
+                    <h3 className="text-violet-400 font-semibold mb-2 text-sm">Feedback</h3>
+                    <p className="text-foreground/80 text-sm">{agentInsights.extractor.explanation}</p>
                   </div>
                 )}
               </CardContent>
@@ -2514,9 +2369,9 @@ export function SessionDetailView({
 
           {/* Skills Detected - Positive reinforcement */}
           {agentInsights.extractor?.skills && Object.keys(agentInsights.extractor.skills).length > 0 && (
-            <Card className="border-zinc-800 bg-zinc-950">
+            <Card className="border-border bg-background">
               <CardHeader>
-                <CardTitle className="text-white flex items-center gap-2">
+                <CardTitle className="text-foreground flex items-center gap-2">
                   <CheckCircle className="h-5 w-5 text-emerald-400" />
                   Skills Demonstrated
                 </CardTitle>
@@ -2529,9 +2384,176 @@ export function SessionDetailView({
                     </Badge>
                   ))}
                 </div>
-                <p className="text-zinc-500 text-xs mt-3">
+                <p className="text-muted-foreground/70 text-xs mt-3">
                   Great job demonstrating these skills! Keep practicing to improve further.
                 </p>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Tips for Improvement - from LLM judge (when extractor is empty this still shows) */}
+          {agentInsights.judge && (
+            <Card className="border-border bg-background">
+              <CardHeader>
+                <CardTitle className="text-foreground flex items-center gap-2">
+                  <MessageSquare className="h-5 w-5 text-violet-400" />
+                  AI Usage Summary
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Metrics row: Prompt IQ, Self Reliance, AI Usage Quality, Integrity */}
+                {(agentInsights.metrics || agentInsights.judge.ai_usage_quality_score !== undefined || agentInsights.judge.integrity_verdict) && (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {agentInsights.metrics?.promptQuality !== undefined && (
+                      <div className="p-3 rounded-lg border border-border bg-card/60">
+                        <div className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-0.5">Prompt IQ</div>
+                        <div className={`text-lg font-bold ${
+                          agentInsights.metrics.promptQuality >= 70 ? 'text-emerald-400' :
+                          agentInsights.metrics.promptQuality >= 40 ? 'text-amber-400' : 'text-red-400'
+                        }`}>{agentInsights.metrics.promptQuality}/100</div>
+                        <Progress value={agentInsights.metrics.promptQuality} className="h-1 mt-1" />
+                      </div>
+                    )}
+                    {agentInsights.metrics?.selfReliance !== undefined && (
+                      <div className="p-3 rounded-lg border border-border bg-card/60">
+                        <div className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-0.5">Self Reliance</div>
+                        <div className={`text-lg font-bold ${
+                          agentInsights.metrics.selfReliance >= 70 ? 'text-emerald-400' :
+                          agentInsights.metrics.selfReliance >= 40 ? 'text-amber-400' : 'text-red-400'
+                        }`}>{agentInsights.metrics.selfReliance}/100</div>
+                        <Progress value={agentInsights.metrics.selfReliance} className="h-1 mt-1" />
+                      </div>
+                    )}
+                    {agentInsights.judge.ai_usage_quality_score !== undefined && (
+                      <div className="p-3 rounded-lg border border-border bg-card/60">
+                        <div className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-0.5">AI Usage Quality</div>
+                        <div className={`text-lg font-bold ${
+                          agentInsights.judge.ai_usage_quality_score >= 7 ? 'text-emerald-400' :
+                          agentInsights.judge.ai_usage_quality_score >= 4 ? 'text-amber-400' : 'text-red-400'
+                        }`}>{agentInsights.judge.ai_usage_quality_score}/10</div>
+                        <Progress value={(agentInsights.judge.ai_usage_quality_score / 10) * 100} className="h-1 mt-1" />
+                      </div>
+                    )}
+                    {agentInsights.judge.integrity_verdict && (
+                      <div className="p-3 rounded-lg border border-border bg-card/60 flex flex-col justify-center">
+                        <div className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-1">Integrity</div>
+                        <Badge className={`w-fit ${
+                          agentInsights.judge.integrity_verdict === 'pass' ? 'bg-emerald-500/20 text-emerald-400' :
+                          agentInsights.judge.integrity_verdict === 'warn' ? 'bg-amber-500/20 text-amber-400' :
+                          'bg-red-500/20 text-red-400'
+                        }`}>
+                          {agentInsights.judge.integrity_verdict.toUpperCase()}
+                        </Badge>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {agentInsights.judge.ai_usage_narrative && (
+                  <p className="text-foreground/80 text-sm">{agentInsights.judge.ai_usage_narrative}</p>
+                )}
+                {Array.isArray(agentInsights.judge.strengths) && agentInsights.judge.strengths.length > 0 && (
+                  <div>
+                    <h3 className="text-emerald-400 font-semibold mb-2 text-sm">Strengths</h3>
+                    <ul className="list-disc list-inside space-y-1 text-foreground/80 text-sm">
+                      {agentInsights.judge.strengths.map((s: string, i: number) => (
+                        <li key={i}>{s}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {Array.isArray(agentInsights.judge.weaknesses) && agentInsights.judge.weaknesses.length > 0 && (
+                  <div>
+                    <h3 className="text-amber-400 font-semibold mb-2 text-sm">Tips for Improvement</h3>
+                    <ul className="list-disc list-inside space-y-1 text-foreground/80 text-sm">
+                      {agentInsights.judge.weaknesses.map((w: string, i: number) => (
+                        <li key={i}>{w}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Empty state - when no extractor or judge data */}
+          {!agentInsights.extractor && !agentInsights.judge && (
+            <Card className="border-border bg-background">
+              <CardContent className="py-8 text-center">
+                <p className="text-muted-foreground/70 text-sm">
+                  Performance insights are still being generated. Check back in a moment or refresh the page.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {/* ── Code Tab — candidate's final workspace files ─────────────────────── */}
+      {activeTab === 'code' && !isCandidateView && session?.finalCode && (
+        <div className="space-y-4">
+          <div>
+            <h2 className="text-xl font-bold text-foreground mb-1">Candidate Code</h2>
+            <p className="text-muted-foreground text-sm">
+              Final state of the workspace collected when the session ended.
+            </p>
+          </div>
+
+          {parsedFiles ? (
+            /* Multi-file IDE workspace */
+            <div className="flex gap-4 min-h-[500px]">
+              {/* File tree */}
+              <div className="w-56 flex-shrink-0 rounded-lg border border-border bg-background p-2 overflow-y-auto">
+                <p className="text-[10px] uppercase tracking-widest text-muted-foreground/70 px-2 py-1 mb-1">Files</p>
+                {Object.keys(parsedFiles).sort().map(filePath => (
+                  <button
+                    key={filePath}
+                    onClick={() => setSelectedCodeFile(filePath)}
+                    title={filePath}
+                    className={`w-full text-left text-xs px-2 py-1 rounded truncate transition-colors ${
+                      selectedCodeFile === filePath
+                        ? 'bg-muted text-foreground'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+                    }`}
+                  >
+                    {filePath.split('/').pop()}
+                    <span className="block text-[10px] text-muted-foreground/60 truncate">{filePath}</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* File content */}
+              <div className="flex-1 rounded-lg border border-border bg-background overflow-hidden">
+                {selectedCodeFile && parsedFiles[selectedCodeFile] !== undefined ? (
+                  <>
+                    <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-card">
+                      <span className="text-xs text-foreground/80 font-mono">{selectedCodeFile}</span>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(parsedFiles[selectedCodeFile])
+                        }}
+                        className="text-[10px] text-muted-foreground/70 hover:text-foreground transition-colors"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                    <pre className="p-4 text-xs text-foreground/80 font-mono overflow-auto max-h-[calc(100vh-280px)] whitespace-pre-wrap break-all">
+                      {parsedFiles[selectedCodeFile] || <span className="text-muted-foreground/60 italic">(empty file)</span>}
+                    </pre>
+                  </>
+                ) : (
+                  <div className="flex items-center justify-center h-full text-muted-foreground/60 text-sm">
+                    Select a file to view its contents
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            /* Legacy single-file plain text */
+            <Card className="border-border bg-background">
+              <CardContent className="p-0">
+                <pre className="p-4 text-xs text-foreground/80 font-mono overflow-auto max-h-[600px] whitespace-pre-wrap break-all">
+                  {session.finalCode}
+                </pre>
               </CardContent>
             </Card>
           )}

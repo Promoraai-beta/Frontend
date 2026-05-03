@@ -8,9 +8,6 @@ const __dirname = path.dirname(__filename)
 const nextConfig = {
   // Enable standalone output for Docker
   output: 'standalone',
-  typescript: {
-    ignoreBuildErrors: true,
-  },
   images: {
     unoptimized: true,
   },
@@ -29,27 +26,34 @@ const nextConfig = {
   async headers() {
     return [
       {
-        // Enable cross-origin isolation required for SharedArrayBuffer/WebContainer
-        // Both COOP + COEP are required for crossOriginIsolated (SharedArrayBuffer)
+        // Assessment pages — COOP only; no COEP so cross-origin Azure container
+        // iframes are not blocked. COEP (credentialless) was required for
+        // StackBlitz SharedArrayBuffer but breaks the code-server iframe.
         source: '/assessment',
         headers: [
           { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
-          { key: 'Cross-Origin-Embedder-Policy', value: 'require-corp' },
+          // No COEP — Azure code-server doesn't send CORP headers
         ],
       },
       {
         source: '/assessment/:path*',
         headers: [
           { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
-          { key: 'Cross-Origin-Embedder-Policy', value: 'require-corp' },
+          // No COEP — Azure code-server doesn't send CORP headers
         ],
       },
       {
-        // IDE sandbox / test page — needs same cross-origin isolation as assessment
+        // IDE sandbox / test page
         source: '/test-ide',
         headers: [
           { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
-          { key: 'Cross-Origin-Embedder-Policy', value: 'require-corp' },
+        ],
+      },
+      {
+        // Test assessment — full workflow with IDE
+        source: '/test-assessment',
+        headers: [
+          { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
         ],
       },
       {

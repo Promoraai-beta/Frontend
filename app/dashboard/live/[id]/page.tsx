@@ -3,10 +3,64 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Eye, Search, AlertTriangle, Activity, BarChart3, Clock, Copy, Send, Video, Monitor } from 'lucide-react';
+import { ArrowLeft, Eye, Search, AlertTriangle, Activity, BarChart3, Clock, Copy, Send, Video, Monitor, BrainCircuit, MessageCircleQuestion, Flag, Pause, Zap } from 'lucide-react';
 import { API_BASE_URL, WS_VIDEO_URL } from '@/lib/config';
 import { ProtectedRoute } from '@/components/protected-route';
 import { api } from '@/lib/api';
+
+// ── Watcher observation interpreter ──────────────────────────────────────────
+// Converts real timeline events into human-readable agent "thoughts".
+// No AI call — pure deterministic rules on real DB data.
+interface WatcherObservation {
+  id: string;
+  ts: string;
+  level: 'info' | 'warn' | 'danger' | 'ok';
+  icon: string;
+  text: string;
+}
+
+function buildWatcherObservations(timeline: any[]): WatcherObservation[] {
+  if (!Array.isArray(timeline)) return [];
+  return timeline.slice(0, 20).map((ev: any, i: number) => {
+    const type: string = ev.type || '';
+    const desc: string = ev.description || '';
+    const sev: string = ev.severity || 'neutral';
+
+    let level: WatcherObservation['level'] = 'info';
+    let icon = '🔵';
+    let text = desc;
+
+    if (type === 'prompt_sent') {
+      if (sev === 'high') {
+        level = 'danger'; icon = '🔴';
+        text = `⚠ High-risk prompt — ${desc}`;
+      } else {
+        level = 'info'; icon = '💬';
+        text = `Candidate queried AI: ${desc.replace('Asked: ', '')}`;
+      }
+    } else if (type === 'response_received') {
+      level = 'info'; icon = '🤖'; text = 'AI responded to candidate';
+    } else if (type === 'code_copied_from_ai' || type === 'code_pasted_from_ai') {
+      level = 'warn'; icon = '📋';
+      text = `Code from AI applied to editor — ${desc}`;
+    } else if (type === 'code_applied_from_ai') {
+      level = 'warn'; icon = '⬇';
+      text = `AI suggestion accepted into codebase`;
+    } else if (type === 'code_modified') {
+      level = 'ok'; icon = '✏'; text = 'Candidate editing code independently';
+    } else if (type === 'submission') {
+      level = 'ok'; icon = '📤'; text = 'Submitted solution';
+    } else if (['file_created','file_modified','file_deleted','file_renamed'].includes(type)) {
+      level = 'ok'; icon = '📂'; text = desc;
+    } else if (type === 'command_executed') {
+      level = 'info'; icon = '⚡'; text = desc;
+    } else if (type === 'terminal_spawned') {
+      level = 'info'; icon = '💻'; text = desc;
+    }
+
+    return { id: `${i}-${ev.timestamp}`, ts: ev.timestamp, level, icon, text };
+  });
+}
 
 interface LiveData {
   timestamp: string;
@@ -21,6 +75,12 @@ interface LiveData {
 
 function LiveMonitoringPageContent() {
   const params = useParams();
+  const sessionId =
+    typeof params?.id === 'string'
+      ? params.id
+      : Array.isArray(params?.id)
+        ? params.id[0]
+        : undefined;
   const router = useRouter();
   const [liveData, setLiveData] = useState<LiveData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -540,33 +600,31 @@ function LiveMonitoringPageContent() {
   }, []);
 
   useEffect(() => {
-    const id = params?.id as string;
-    if (!id) return;
+    if (!sessionId) return;
 
     // Initial load
-    loadLiveData(id);
-    loadVideoChunks(id);
+    loadLiveData(sessionId);
+    loadVideoChunks(sessionId);
 
     // Poll every 5 seconds for live updates (reduced frequency to avoid rate limiting)
     const interval = setInterval(() => {
-      loadLiveData(id);
+      loadLiveData(sessionId);
     }, 5000);
 
     // Poll for video chunks less frequently
     const videoInterval = setInterval(() => {
-      loadVideoChunks(id);
+      loadVideoChunks(sessionId);
     }, 10000); // Every 10 seconds
 
     return () => {
       clearInterval(interval);
       clearInterval(videoInterval);
     };
-  }, [params]);
+  }, [sessionId]);
 
   // WebSocket for true live streaming
   useEffect(() => {
-    const id = params?.id as string;
-    if (!id) return;
+    if (!sessionId) return;
 
     // Mark as mounted
     isMountedRef.current = true;
@@ -616,7 +674,7 @@ function LiveMonitoringPageContent() {
       
       ws.send(JSON.stringify({
         type: 'register',
-        sessionId: id,
+        sessionId,
         clientType: 'recruiter'
       }));
     };
@@ -659,7 +717,7 @@ function LiveMonitoringPageContent() {
       wsRef.current = null;
       
       // Attempt to reconnect if connection was closed unexpectedly and component is still mounted
-      if (event.code !== 1000 && event.code !== 1001 && isMountedRef.current && id) {
+      if (event.code !== 1000 && event.code !== 1001 && isMountedRef.current && sessionId) {
         console.log('Attempting to reconnect WebSocket...');
         reconnectTimeoutRef.current = setTimeout(() => {
           // Check again if component is still mounted before reconnecting
@@ -684,7 +742,7 @@ function LiveMonitoringPageContent() {
               
               newWs.send(JSON.stringify({
                 type: 'register',
-                sessionId: id,
+                sessionId,
                 clientType: 'recruiter'
               }));
             };
@@ -785,7 +843,7 @@ function LiveMonitoringPageContent() {
       webcamSourceBufferRef.current = null;
       screenshareSourceBufferRef.current = null;
     };
-  }, [params]);
+  }, [sessionId]);
 
   async function loadLiveData(sessionId: string) {
     try {
@@ -1142,7 +1200,7 @@ function LiveMonitoringPageContent() {
               <h1 className="text-lg sm:text-xl font-bold text-white">Live Monitoring</h1>
             </div>
             <span className="hidden sm:inline text-xs text-zinc-400 px-2 py-1 bg-zinc-900 border border-zinc-800 rounded">
-              Session: {params?.id}
+              Session: {sessionId}
             </span>
           </div>
         </div>
@@ -1369,6 +1427,114 @@ function LiveMonitoringPageContent() {
                     {event.severity === 'high' && <span className="text-red-400">🚩</span>}
                   </div>
                 ))}
+              </div>
+            </div>
+
+            {/* ── Agent Watcher Feed ─────────────────────────────────────────── */}
+            <div className="border border-emerald-500/20 bg-zinc-950/80 backdrop-blur-xl rounded-xl overflow-hidden">
+              {/* Header */}
+              <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800 bg-zinc-900/60">
+                <div className="flex items-center gap-2.5">
+                  <BrainCircuit className="h-4 w-4 text-emerald-400" />
+                  <span className="text-sm font-bold text-white tracking-wide">AGENT WATCHER</span>
+                  <span className="flex items-center gap-1 text-[10px] font-mono text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded-full">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse inline-block" />
+                    OBSERVING
+                  </span>
+                </div>
+                <div className="text-[10px] text-zinc-500 font-mono">
+                  {liveData.timeline.length} events captured
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-5">
+                {/* Observation Feed — 3/5 */}
+                <div className="lg:col-span-3 p-4 border-b lg:border-b-0 lg:border-r border-zinc-800">
+                  <div className="text-[10px] uppercase tracking-widest text-zinc-500 mb-3">Live Observations</div>
+                  <div className="space-y-2 max-h-72 overflow-y-auto pr-1 scrollbar-thin scrollbar-track-transparent scrollbar-thumb-zinc-700">
+                    {buildWatcherObservations(liveData.timeline).length === 0 ? (
+                      <div className="text-zinc-600 text-xs italic py-4 text-center">
+                        Waiting for candidate activity…
+                      </div>
+                    ) : buildWatcherObservations(liveData.timeline).map((obs) => (
+                      <div
+                        key={obs.id}
+                        className={`flex items-start gap-2.5 p-2 rounded-lg border text-xs ${
+                          obs.level === 'danger' ? 'bg-red-500/10 border-red-500/20' :
+                          obs.level === 'warn'   ? 'bg-amber-500/10 border-amber-500/20' :
+                          obs.level === 'ok'     ? 'bg-emerald-500/5 border-emerald-500/10' :
+                          'bg-zinc-900/40 border-zinc-800/60'
+                        }`}
+                      >
+                        <span className="shrink-0 mt-0.5">{obs.icon}</span>
+                        <div className="flex-1 min-w-0">
+                          <span className={`${
+                            obs.level === 'danger' ? 'text-red-300' :
+                            obs.level === 'warn'   ? 'text-amber-300' :
+                            obs.level === 'ok'     ? 'text-emerald-300' :
+                            'text-zinc-300'
+                          }`}>{obs.text}</span>
+                        </div>
+                        <span className="shrink-0 text-zinc-600 font-mono text-[10px]">
+                          {new Date(obs.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Intervention Panel — 2/5 */}
+                <div className="lg:col-span-2 p-4 flex flex-col gap-4">
+                  {/* Current Status */}
+                  <div>
+                    <div className="text-[10px] uppercase tracking-widest text-zinc-500 mb-2">Current Focus</div>
+                    <div className="p-3 rounded-lg bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-300 leading-relaxed">
+                      {liveData.watcher.latestActivity}
+                      {liveData.metrics.totalPrompts > 0 && (
+                        <span className="block mt-1 text-zinc-500">
+                          {liveData.metrics.totalPrompts} prompts · {liveData.metrics.aiTimePercent}% AI time · self-reliance {liveData.extractor.selfReliance}/100
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Intervention Tools — foundation */}
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="text-[10px] uppercase tracking-widest text-zinc-500">Intervention Tools</div>
+                      <span className="text-[9px] text-zinc-600 bg-zinc-800 px-1.5 py-0.5 rounded font-mono">COMING SOON</span>
+                    </div>
+                    <div className="space-y-2">
+                      <button
+                        disabled
+                        title="Ask the candidate a follow-up question mid-session — coming soon"
+                        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg border border-zinc-700/50 bg-zinc-900/40 text-xs text-zinc-500 cursor-not-allowed opacity-60"
+                      >
+                        <MessageCircleQuestion className="h-3.5 w-3.5 text-blue-500/60 shrink-0" />
+                        <span>Ask candidate a question</span>
+                      </button>
+                      <button
+                        disabled
+                        title="Flag this session for urgent review — coming soon"
+                        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg border border-zinc-700/50 bg-zinc-900/40 text-xs text-zinc-500 cursor-not-allowed opacity-60"
+                      >
+                        <Flag className="h-3.5 w-3.5 text-amber-500/60 shrink-0" />
+                        <span>Flag session for review</span>
+                      </button>
+                      <button
+                        disabled
+                        title="Pause the session and prompt the candidate — coming soon"
+                        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg border border-zinc-700/50 bg-zinc-900/40 text-xs text-zinc-500 cursor-not-allowed opacity-60"
+                      >
+                        <Zap className="h-3.5 w-3.5 text-violet-500/60 shrink-0" />
+                        <span>Trigger live prompt</span>
+                      </button>
+                    </div>
+                    <p className="mt-2 text-[10px] text-zinc-600 leading-relaxed">
+                      Future: send AI-generated or custom questions to the candidate mid-assessment based on what the watcher detects.
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
 

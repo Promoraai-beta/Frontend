@@ -100,22 +100,32 @@ export function RecruiterNavbar() {
 
             {/* Center navigation - Desktop only */}
             <div className="hidden items-center gap-8 md:flex">
-              <button
-                onClick={() => router.push("/dashboard")}
-                className={`text-sm transition-colors ${
-                  pathname === "/dashboard" ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                Dashboard
-              </button>
-              <button
-                onClick={() => router.push("/dashboard/candidates")}
-                className={`text-sm transition-colors ${
-                  pathname.startsWith("/dashboard/candidates") ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                Candidates
-              </button>
+              {[
+                { label: "Dashboard",  href: "/dashboard",            match: (p: string) => p === "/dashboard" },
+                { label: "Positions",  href: "/dashboard/positions",  match: (p: string) => p.startsWith("/dashboard/positions") },
+                { label: "Candidates", href: "/dashboard/candidates", match: (p: string) => p.startsWith("/dashboard/candidates") },
+                { label: "Live",       href: "/dashboard/live",       match: (p: string) => p === "/dashboard/live" },
+                { label: "Reports",    href: "/dashboard/reports",    match: (p: string) => p.startsWith("/dashboard/reports") },
+              ].map(({ label, href, match }) => {
+                const active = match(pathname)
+                return (
+                  <button
+                    key={label}
+                    onClick={() => router.push(href)}
+                    className={`relative text-sm transition-colors pb-0.5 flex items-center gap-1.5 ${
+                      active ? "text-white font-medium" : "text-zinc-400 hover:text-white"
+                    }`}
+                  >
+                    {label === "Live" && (
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />
+                    )}
+                    {label}
+                    {active && (
+                      <span className="absolute bottom-0 left-0 right-0 h-[2px] rounded-full bg-white" />
+                    )}
+                  </button>
+                )
+              })}
             </div>
 
             {/* User info and logout on right */}
@@ -179,28 +189,21 @@ export function RecruiterNavbar() {
             className="fixed left-1/2 top-20 z-40 w-[90%] -translate-x-1/2 rounded-2xl border border-border bg-background/95 p-6 backdrop-blur-lg md:hidden"
           >
             <div className="space-y-4">
-              <button
-                onClick={() => {
-                  router.push("/dashboard")
-                  setIsMobileMenuOpen(false)
-                }}
-                className={`block w-full text-left transition-colors ${
-                  pathname === "/dashboard" ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                Dashboard
-              </button>
-              <button
-                onClick={() => {
-                  router.push("/dashboard/candidates")
-                  setIsMobileMenuOpen(false)
-                }}
-                className={`block w-full text-left transition-colors ${
-                  pathname.startsWith("/dashboard/candidates") ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                Candidates
-              </button>
+              {[
+                { label: "Dashboard",  href: "/dashboard" },
+                { label: "Positions",  href: "/dashboard/positions" },
+                { label: "Candidates", href: "/dashboard/candidates" },
+                { label: "Live",       href: "/dashboard/live" },
+                { label: "Reports",    href: "/dashboard/reports" },
+              ].map(({ label, href }) => (
+                <button
+                  key={label}
+                  onClick={() => { router.push(href); setIsMobileMenuOpen(false) }}
+                  className="block w-full text-left text-sm text-zinc-400 hover:text-white transition-colors"
+                >
+                  {label}
+                </button>
+              ))}
               <div className="flex gap-2 pt-2">
                 <ThemeToggle variant="ghost" size="icon" className="shrink-0" />
               </div>

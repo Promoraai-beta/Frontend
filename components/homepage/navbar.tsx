@@ -3,7 +3,19 @@
 import { useState, useEffect } from "react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
-import { Menu, X, LogIn, Sparkles } from "lucide-react"
+import { Menu, X, LogIn } from "lucide-react"
+
+const PromoraLogo = () => (
+  <svg width="18" height="18" viewBox="0 0 100 100" fill="currentColor">
+    <polygon points="50,50 15,18 26,10"/>
+    <polygon points="50,50 58,5 67,12"/>
+    <polygon points="50,50 73,17 80,26"/>
+    <polygon points="50,50 86,38 87,50"/>
+    <polygon points="50,50 79,67 69,77"/>
+    <polygon points="50,50 46,88 36,84"/>
+    <polygon points="50,50 8,62 18,80"/>
+  </svg>
+)
 import { ThemeToggle } from "@/components/theme-toggle"
 import { motion, AnimatePresence } from "framer-motion"
 
@@ -37,8 +49,8 @@ export function Navbar() {
           <div className="flex items-center justify-between">
             {/* Logo on left */}
             <Link href="/" className="flex items-center gap-2 text-xl font-bold text-foreground md:text-2xl">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-primary/80 shadow-lg">
-                <Sparkles className="h-4 w-4 text-primary-foreground" />
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-foreground text-background">
+                <PromoraLogo />
               </div>
               PromoraAI
             </Link>
@@ -46,18 +58,18 @@ export function Navbar() {
             {/* Center navigation - Desktop only */}
             <div className="hidden items-center gap-8 md:flex">
               <Link
-                href="#demo"
+                href="#problem"
                 className="text-muted-foreground transition-colors hover:text-foreground"
                 style={{ fontSize: "0.9375rem" }}
               >
-                Demo
+                Problem
               </Link>
               <Link
-                href="#features"
+                href="#promptiq"
                 className="text-muted-foreground transition-colors hover:text-foreground"
                 style={{ fontSize: "0.9375rem" }}
               >
-                Features
+                PromptIQ
               </Link>
               <Link
                 href="#compare"
@@ -67,11 +79,11 @@ export function Navbar() {
                 Compare
               </Link>
               <Link
-                href="/pricing"
+                href="#vision"
                 className="text-muted-foreground transition-colors hover:text-foreground"
                 style={{ fontSize: "0.9375rem" }}
               >
-                Pricing
+                Vision
               </Link>
               <Link
                 href="#faq"
@@ -82,13 +94,18 @@ export function Navbar() {
               </Link>
             </div>
 
-            {/* Login button with icon on right */}
+            {/* Right side: theme toggle + login + book demo */}
             <div className="hidden items-center gap-2 md:flex">
               <ThemeToggle variant="ghost" size="icon" className="shrink-0" />
               <Button asChild variant="ghost" size="sm" className="gap-2 text-foreground hover:bg-muted hover:text-foreground">
                 <Link href="/login">
                   <LogIn className="h-4 w-4" />
                   Login
+                </Link>
+              </Button>
+              <Button asChild size="sm">
+                <Link href="https://calendly.com/promoraai05/30min" target="_blank" rel="noopener noreferrer">
+                  Book a demo
                 </Link>
               </Button>
             </div>
@@ -112,18 +129,18 @@ export function Navbar() {
           >
             <div className="space-y-4">
               <Link
-                href="#demo"
+                href="#problem"
                 className="block text-muted-foreground transition-colors hover:text-foreground"
                 onClick={() => setIsMobileMenuOpen(false)}
               >
-                Demo
+                Problem
               </Link>
               <Link
-                href="#features"
+                href="#promptiq"
                 className="block text-muted-foreground transition-colors hover:text-foreground"
                 onClick={() => setIsMobileMenuOpen(false)}
               >
-                Features
+                PromptIQ
               </Link>
               <Link
                 href="#compare"
@@ -133,11 +150,11 @@ export function Navbar() {
                 Compare
               </Link>
               <Link
-                href="/pricing"
+                href="#vision"
                 className="block text-muted-foreground transition-colors hover:text-foreground"
                 onClick={() => setIsMobileMenuOpen(false)}
               >
-                Pricing
+                Vision
               </Link>
               <Link
                 href="#faq"
@@ -148,11 +165,14 @@ export function Navbar() {
               </Link>
               <div className="flex gap-2 pt-4">
                 <ThemeToggle variant="ghost" size="icon" className="shrink-0" />
-                <Button asChild className="flex-1 gap-2">
+                <Button asChild variant="ghost" size="sm" className="gap-2">
                   <Link href="/login">
                     <LogIn className="h-4 w-4" />
                     Login
                   </Link>
+                </Button>
+                <Button asChild size="sm" className="flex-1">
+                  <Link href="https://calendly.com/promoraai05/30min" target="_blank" rel="noopener noreferrer">Book a demo</Link>
                 </Button>
               </div>
             </div>

@@ -170,6 +170,14 @@ async function proxyRequest(
     
     return proxiedResponse;
   } catch (error: any) {
+    const msg = error?.message || String(error);
+    const isConn =
+      /ECONNREFUSED|fetch failed|network|socket/i.test(msg) ||
+      error?.cause?.code === 'ECONNREFUSED';
+    const hint =
+      process.env.NODE_ENV === 'development' && isConn
+        ? ` Backend unreachable at ${BACKEND_URL}. Start it: cd backend && npm run dev (port 5001).`
+        : '';
     console.error('API proxy error:', error);
     console.error('Error details:', {
       message: error.message,
@@ -180,7 +188,7 @@ async function proxyRequest(
       {
         success: false,
         error: 'Failed to proxy request to backend',
-        message: error.message,
+        message: msg + hint,
         details: process.env.NODE_ENV === 'development' ? error.stack : undefined,
       },
       { status: 502 }

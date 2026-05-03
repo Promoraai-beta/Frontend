@@ -16,8 +16,8 @@ export function ResultTab({ result }: ResultTabProps) {
   const totalCompliances = result.compliances.length
 
   const handleDownloadReport = () => {
-    // In a real app, this would generate and download a PDF report
-    console.log("Downloading report...")
+    // Navigation handled by session-detail-view for real sessions
+    console.log("View report clicked")
   }
 
   return (
@@ -29,7 +29,7 @@ export function ResultTab({ result }: ResultTabProps) {
             <CardTitle className="text-2xl text-white">Assessment Score</CardTitle>
             <Button onClick={handleDownloadReport} className="gap-2 bg-white text-black hover:bg-zinc-200">
               <Download className="h-4 w-4" />
-              Download Report
+              View Report
             </Button>
           </div>
         </CardHeader>

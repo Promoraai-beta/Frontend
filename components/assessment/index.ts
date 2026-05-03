@@ -1,4 +1,5 @@
 export { Timer } from './Timer';
 export { Sidebar } from './Sidebar';
-export { default as StackBlitzIDE } from './StackBlitzIDE';
+// StackBlitz PAUSED — using local Docker / Azure Container instead
+// export { default as StackBlitzIDE } from './StackBlitzIDE';
 

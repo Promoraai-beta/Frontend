@@ -8,6 +8,12 @@ import { API_BASE_URL } from '@/lib/config';
 
 export default function SessionDetailPage() {
   const params = useParams();
+  const sessionId =
+    typeof params?.id === 'string'
+      ? params.id
+      : Array.isArray(params?.id)
+        ? params.id[0]
+        : undefined;
   const router = useRouter();
   const [session, setSession] = useState<any>(null);
   const [subs, setSubs] = useState<any[]>([]);
@@ -22,30 +28,29 @@ export default function SessionDetailPage() {
   const screenshareVideoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
-    const id = params?.id as string;
-    if (!id) return;
+    if (!sessionId) return;
 
     async function load() {
       try {
-        const s = await fetch(`${API_BASE_URL}/api/sessions/${id}`).then(r => r.json());
+        const s = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}`).then(r => r.json());
         if (!s.success) throw new Error(s.error || 'Failed to load session');
         setSession(s.data);
 
-        const sub = await fetch(`${API_BASE_URL}/api/submissions?session_id=${id}`).then(r => r.json()).catch(() => ({ success: false }));
+        const sub = await fetch(`${API_BASE_URL}/api/submissions?session_id=${sessionId}`).then(r => r.json()).catch(() => ({ success: false }));
         if (sub.success) setSubs(sub.data || []);
 
-        const ai = await fetch(`${API_BASE_URL}/api/ai-interactions?session_id=${id}`).then(r => r.json()).catch(() => ({ success: false }));
+        const ai = await fetch(`${API_BASE_URL}/api/ai-interactions?session_id=${sessionId}`).then(r => r.json()).catch(() => ({ success: false }));
         if (ai.success) setAiInteractions(ai.data || []);
 
         // Get agent analysis
-        const watcherData = await fetch(`${API_BASE_URL}/api/agents/watcher/${id}`).then(r => r.json()).catch(() => ({ success: false }));
+        const watcherData = await fetch(`${API_BASE_URL}/api/agents/watcher/${sessionId}`).then(r => r.json()).catch(() => ({ success: false }));
         if (watcherData.success) {
           setViolations(watcherData.violations || []);
           setRiskScore(watcherData.riskScore || 0);
         }
 
         // Get video chunks (now returns grouped data: { webcam: [...], screenshare: [...] })
-        const videoData = await fetch(`${API_BASE_URL}/api/video/${id}`).then(r => r.json()).catch(() => ({ success: false }));
+        const videoData = await fetch(`${API_BASE_URL}/api/video/${sessionId}`).then(r => r.json()).catch(() => ({ success: false }));
         if (videoData.success && videoData.data) {
           // Combine webcam and screenshare chunks into a single array for backwards compatibility
           const allChunks = [
@@ -77,7 +82,7 @@ export default function SessionDetailPage() {
       }
     }
     load();
-  }, [params]);
+  }, [sessionId]);
 
   // Initialize video players when recordings tab is active using MediaSource API
   useEffect(() => {

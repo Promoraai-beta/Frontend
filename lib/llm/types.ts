@@ -1,3 +1,5 @@
+import type { FullWorkflowContext } from './context';
+
 /**
  * LLM Service Interface
  * 
@@ -13,10 +15,10 @@ export interface LLMProvider {
   /**
    * Send a chat message and get response
    * @param messages - Array of message objects with role and content
-   * @param problemContext - Optional problem context to help the LLM understand the coding problem
+   * @param context - Full workflow context: IDE files, problems, output, active tab
    * @returns The AI response as a string
    */
-  chat(messages: Array<{role: string, content: string}>, problemContext?: string): Promise<string>;
+  chat(messages: Array<{role: string, content: string}>, context?: FullWorkflowContext): Promise<string>;
   
   /**
    * Check if this LLM provider is properly configured

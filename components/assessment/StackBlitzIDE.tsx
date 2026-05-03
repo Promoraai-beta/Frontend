@@ -1,8 +1,9 @@
 'use client';
 
+import '@xterm/xterm/css/xterm.css';
 import { useEffect, useRef, useState, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { createPortal } from 'react-dom';
-import type { WebContainer } from '@webcontainer/api';
+import type { WebContainer, FileSystemTree } from '@webcontainer/api';
 import { STACKBLITZ_WEBCONTAINER_API_KEY } from '@/lib/config';
 import dynamic from 'next/dynamic';
 import { useAIWatcher } from '@/hooks/useAIWatcher';
@@ -46,6 +47,7 @@ const MonacoEditor = dynamic(() => import('@monaco-editor/react'), {
 
 
 import type { Message } from '@/types/assessment';
+import { ConsolePanel, ProblemsPanel, FileExplorer, type FileNode, type ConsoleEntry, type TerminalInstance } from './ide';
 
 interface Task {
   id: number;
@@ -70,21 +72,17 @@ interface StackBlitzIDEProps {
   showLLMSelector?: boolean;
   onSelectLLM?: (llm: string) => void;
   sessionId?: string | null; // Session ID for MCP tracking
+  /** Called when IDE status changes (ready, loading, error) - parent can gate assessment on IDE health */
+  onStatusChange?: (status: { isReady: boolean; isLoading: boolean; error: string | null }) => void;
 }
 
-// File tree structure
-interface FileNode {
-  name: string;
-  path: string;
-  type: 'file' | 'directory';
-  children?: FileNode[];
-  expanded?: boolean;
-}
 
 // Public methods exposed via ref
 export interface StackBlitzIDEHandle {
   /** Recursively read all files from WebContainer and return as {path: content} */
   getAllFiles: () => Promise<Record<string, string>>;
+  /** Current IDE status - parent can check before allowing assessment to proceed */
+  getStatus: () => { isReady: boolean; isLoading: boolean; error: string | null };
 }
 
 // Singleton to ensure only one WebContainer instance exists globally
@@ -106,7 +104,8 @@ const StackBlitzIDE = forwardRef<StackBlitzIDEHandle, StackBlitzIDEProps>(functi
   selectedLLM,
   showLLMSelector = false,
   onSelectLLM,
-  sessionId
+  sessionId,
+  onStatusChange
 }, ref) {
   const containerRef = useRef<WebContainer | null>(null);
 
@@ -148,8 +147,6 @@ const StackBlitzIDE = forwardRef<StackBlitzIDEHandle, StackBlitzIDEProps>(functi
     return result;
   }, []);
 
-  useImperativeHandle(ref, () => ({ getAllFiles }), [getAllFiles]);
-  
   // Initialize AI Watcher for tracking WebContainer activities
   const { trackEvent, trackCodeModification } = useAIWatcher();
   const terminalRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -158,6 +155,16 @@ const StackBlitzIDE = forwardRef<StackBlitzIDEHandle, StackBlitzIDEProps>(functi
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isReady, setIsReady] = useState(false);
+  useImperativeHandle(ref, () => ({
+    getAllFiles,
+    getStatus: () => ({ isReady, isLoading, error }),
+  }), [getAllFiles, isReady, isLoading, error]);
+
+  // Notify parent of IDE status changes
+  useEffect(() => {
+    onStatusChange?.({ isReady, isLoading, error });
+  }, [isReady, isLoading, error, onStatusChange]);
+
   const [fileTree, setFileTree] = useState<FileNode[]>([]);
   const [openFiles, setOpenFiles] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -177,15 +184,6 @@ const StackBlitzIDE = forwardRef<StackBlitzIDEHandle, StackBlitzIDEProps>(functi
   const [cursorColumn, setCursorColumn] = useState(1);
   
   // Multiple terminals support
-  interface TerminalInstance {
-    id: string;
-    name: string;
-    terminal: any;
-    process: any;
-    fitAddon: any;
-    searchAddon: any;
-    inputWriter: any;
-  }
   const [terminals, setTerminals] = useState<TerminalInstance[]>([]);
   const [activeTerminalId, setActiveTerminalId] = useState<string | null>(null);
   const [editorViewMode, setEditorViewMode] = useState<'code' | 'preview'>('code');
@@ -199,13 +197,6 @@ const StackBlitzIDE = forwardRef<StackBlitzIDEHandle, StackBlitzIDEProps>(functi
   const [terminalContextMenu, setTerminalContextMenu] = useState<{ x: number; y: number; terminalId: string } | null>(null);
 
   // ── Console / Output Panel ──
-  interface ConsoleEntry {
-    id: string;
-    type: 'info' | 'error' | 'warn' | 'success' | 'output';
-    message: string;
-    timestamp: Date;
-    source?: string; // 'npm-install' | 'dev-server' | 'system'
-  }
   const [consoleLogs, setConsoleLogs] = useState<ConsoleEntry[]>([]);
   const [bottomPanelTab, setBottomPanelTab] = useState<'terminal' | 'console' | 'problems'>('console');
   const consoleEndRef = useRef<HTMLDivElement>(null);
@@ -250,14 +241,19 @@ const StackBlitzIDE = forwardRef<StackBlitzIDEHandle, StackBlitzIDEProps>(functi
   const [creatingItem, setCreatingItem] = useState<{ type: 'file' | 'folder'; parentPath: string } | null>(null);
   const [newItemName, setNewItemName] = useState('');
   const newItemInputRef = useRef<HTMLInputElement>(null);
-  
+  // Ref to avoid stale closure when confirming (ensures we always use the correct type)
+  const creatingItemRef = useRef<{ type: 'file' | 'folder'; parentPath: string } | null>(null);
+  useEffect(() => {
+    creatingItemRef.current = creatingItem;
+  }, [creatingItem]);
+
   // Build file tree structure from flat file list
-  const buildFileTree = useCallback((filePaths: string[]): FileNode[] => {
+  const buildFileTree = useCallback((filePaths: string[], directoryPaths: Set<string> = new Set()): FileNode[] => {
     const tree: FileNode[] = [];
     const pathMap = new Map<string, FileNode>();
     const directorySet = new Set<string>();
     
-    // First pass: identify all directories
+    // First pass: identify all directories (from file paths + explicit directory list)
     for (const filePath of filePaths) {
       const parts = filePath.split('/').filter(p => p);
       let currentPath = '';
@@ -267,6 +263,9 @@ const StackBlitzIDE = forwardRef<StackBlitzIDEHandle, StackBlitzIDEProps>(functi
         currentPath = currentPath ? `${currentPath}/${part}` : part;
         directorySet.add(currentPath);
       }
+    }
+    for (const dir of directoryPaths) {
+      directorySet.add(dir);
     }
     
     // Second pass: build tree structure
@@ -382,7 +381,8 @@ const StackBlitzIDE = forwardRef<StackBlitzIDEHandle, StackBlitzIDEProps>(functi
       const result = await listAll();
       // Combine all paths (files and directories) for tree building
       const allPaths = [...result.files, ...result.dirs];
-      const tree = buildFileTree(allPaths);
+      const dirSet = new Set(result.dirs);
+      const tree = buildFileTree(allPaths, dirSet);
       setFileTree(tree);
     } catch (err) {
       console.error('Failed to refresh file tree:', err);
@@ -524,9 +524,30 @@ const StackBlitzIDE = forwardRef<StackBlitzIDEHandle, StackBlitzIDEProps>(functi
         }
 
         // Mount file system
-        if (Object.keys(filesToMount).length > 0) {
-          console.log('📁 Mounting file system...', Object.keys(filesToMount));
-          await container.mount(filesToMount);
+        // Convert flat { path: { contents } } to FileSystemTree when using files prop
+        const tree: FileSystemTree = templateFiles && Object.keys(templateFiles).length > 0
+          ? (filesToMount as unknown as FileSystemTree)
+          : (() => {
+              const result: FileSystemTree = {};
+              for (const [path, data] of Object.entries(filesToMount)) {
+                const parts = path.split('/');
+                let current: FileSystemTree = result;
+                for (let i = 0; i < parts.length - 1; i++) {
+                  const part = parts[i];
+                  const existing = current[part];
+                  if (!existing || !('directory' in existing)) {
+                    (current as Record<string, unknown>)[part] = { directory: {} };
+                  }
+                  current = (current[part] as { directory: FileSystemTree }).directory;
+                }
+                const fileName = parts[parts.length - 1];
+                (current as Record<string, unknown>)[fileName] = { file: { contents: data.contents } };
+              }
+              return result;
+            })();
+        if (Object.keys(tree).length > 0) {
+          console.log('📁 Mounting file system...', Object.keys(tree));
+          await container.mount(tree);
           console.log('✅ File system mounted');
         } else {
           await container.mount({
@@ -552,6 +573,20 @@ const StackBlitzIDE = forwardRef<StackBlitzIDEHandle, StackBlitzIDEProps>(functi
 
         // Refresh file tree
         await refreshFileTree();
+
+        // Sanity check: verify IDE is actually working before marking ready
+        try {
+          const entries = await container.fs.readdir('/', { withFileTypes: true });
+          const firstFile = entries?.find((e: any) => !e.isDirectory?.());
+          if (firstFile) {
+            await container.fs.readFile(`/${firstFile.name}`, 'utf-8');
+          }
+        } catch (verifyErr: any) {
+          console.error('IDE sanity check failed:', verifyErr);
+          setError(`IDE verification failed: ${verifyErr?.message || 'Cannot read files. Please refresh.'}`);
+          setIsLoading(false);
+          return;
+        }
 
         // Don't auto-create terminal - let user create when needed
 
@@ -761,7 +796,9 @@ const StackBlitzIDE = forwardRef<StackBlitzIDEHandle, StackBlitzIDEProps>(functi
       if (!openFiles.includes(filePath)) {
         setOpenFiles([...openFiles, filePath]);
       }
-    } catch (err) {
+    } catch (err: any) {
+      // EISDIR: path is a directory, not a file - skip silently (tree should not pass dirs)
+      if (err?.message?.includes?.('EISDIR') || err?.code === 'EISDIR') return;
       console.error('Failed to read file:', err);
       setSelectedFile(null);
       setFileContent('');
@@ -995,160 +1032,6 @@ const StackBlitzIDE = forwardRef<StackBlitzIDEHandle, StackBlitzIDEProps>(functi
     setFileTree(updateNode(fileTree));
   };
 
-  // Render file tree recursively
-  const renderFileTree = (nodes: FileNode[], level: number = 0, parentPath: string = '/'): JSX.Element[] => {
-    return nodes.map((node) => {
-      const isDirectory = node.type === 'directory';
-      const isSelected = selectedFile === node.path;
-      const isRenaming = renamingFile === node.path;
-      const isCreatingInThisFolder = creatingItem && creatingItem.parentPath === node.path;
-      
-      return (
-        <div key={node.path} className="group">
-          <div
-            className={`flex items-center gap-2 px-2 py-1 rounded cursor-pointer text-sm ${
-              isSelected 
-                ? 'bg-blue-500/10 text-blue-200' 
-                : 'text-zinc-300 hover:bg-zinc-800'
-            }`}
-            style={{ paddingLeft: `${level * 16 + 12}px` }}
-            onClick={(e) => {
-              if (isRenaming) return;
-              if (isDirectory) {
-                toggleFolder(node);
-              } else {
-                handleFileSelect(node.path);
-              }
-            }}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              setContextMenu({ x: e.clientX, y: e.clientY, path: node.path, type: node.type });
-            }}
-          >
-            {isDirectory ? (
-              <>
-                {node.expanded ? (
-                  <ChevronDown className="h-3 w-3 text-zinc-400" />
-                ) : (
-                  <ChevronRight className="h-3 w-3 text-zinc-400" />
-                )}
-                <Folder className="h-3 w-3 text-amber-300" />
-              </>
-            ) : (
-              <>
-                <div className="w-3" />
-                <span className={`text-[10px] font-bold ${getFileIcon(node.name).color} w-4 text-center leading-none`}>{getFileIcon(node.name).icon}</span>
-              </>
-            )}
-            {isRenaming ? (
-              <input
-                type="text"
-                value={renameValue}
-                onChange={(e) => setRenameValue(e.target.value)}
-                onBlur={() => {
-                  if (renameValue.trim() && renameValue !== node.name) {
-                    handleRename(node.path, renameValue);
-                  } else {
-                    setRenamingFile(null);
-                    setRenameValue('');
-                  }
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    if (renameValue.trim() && renameValue !== node.name) {
-                      handleRename(node.path, renameValue);
-                    } else {
-                      setRenamingFile(null);
-                      setRenameValue('');
-                    }
-                  } else if (e.key === 'Escape') {
-                    setRenamingFile(null);
-                    setRenameValue('');
-                  }
-                }}
-                className="flex-1 bg-zinc-800 border border-zinc-600 rounded px-2 py-0.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
-                autoFocus
-                onClick={(e) => e.stopPropagation()}
-              />
-            ) : (
-              <span className="truncate flex-1">{node.name}</span>
-            )}
-            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setRenamingFile(node.path);
-                  setRenameValue(node.name);
-                }}
-                className="p-0.5 hover:bg-zinc-700 rounded text-zinc-400 hover:text-zinc-200"
-                title="Rename"
-              >
-                <Edit2 className="h-3 w-3" />
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleDelete(node.path);
-                }}
-                className="p-0.5 hover:bg-zinc-700 rounded text-zinc-400 hover:text-red-400"
-                title="Delete"
-              >
-                <Trash2 className="h-3 w-3" />
-              </button>
-            </div>
-          </div>
-          {isDirectory && node.expanded && (
-            <div>
-              {/* Show creation input inside this folder if it's the target */}
-              {isCreatingInThisFolder && (
-                <div 
-                  className="px-2 py-1.5 border border-emerald-500/50 bg-emerald-500/10 rounded-lg mx-2 my-1"
-                  style={{ paddingLeft: `${(level + 1) * 16 + 12}px` }}
-                >
-                  <div className="flex items-center gap-2">
-                    {creatingItem!.type === 'folder' ? (
-                      <Folder className="h-3 w-3 text-amber-300 shrink-0" />
-                    ) : (
-                      <span className="text-xs">📄</span>
-                    )}
-                    <input
-                      ref={newItemInputRef}
-                      type="text"
-                      value={newItemName}
-                      onChange={(e) => setNewItemName(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          if (newItemName.trim()) {
-                            handleConfirmCreate();
-                          }
-                        } else if (e.key === 'Escape') {
-                          e.preventDefault();
-                          handleCancelCreate();
-                        }
-                      }}
-                      onBlur={() => {
-                        // Cancel if empty on blur
-                        if (!newItemName.trim()) {
-                          handleCancelCreate();
-                        }
-                      }}
-                      placeholder={`Enter ${creatingItem!.type} name and press Enter...`}
-                      className="flex-1 bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500"
-                      autoFocus
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  </div>
-                </div>
-              )}
-              {node.children && renderFileTree(node.children, level + 1, node.path)}
-            </div>
-          )}
-        </div>
-      );
-    });
-  };
-
   // Get breadcrumbs from file path
   const getBreadcrumbs = (filePath: string | null): string[] => {
     if (!filePath) return [];
@@ -1258,17 +1141,21 @@ const StackBlitzIDE = forwardRef<StackBlitzIDEHandle, StackBlitzIDEProps>(functi
       // ── Suppress initial jsh output (garbled welcome) ──
       // Strategy: absorb output for ~800ms while jsh boots, then reset
       // the terminal to a clean state and pipe everything through normally.
+      // Also filter jsh prompt redraw garbage (>>>>>>) that can appear at any time.
       let suppressOutput = true;
+      const filterJshNoise = (s: string) => s.replace(/>{3,}/g, ''); // 3+ consecutive '>' = prompt redraw garbage
 
       proc.output.pipeTo(
         new WritableStream({
           write(data: string) {
             if (suppressOutput) return; // Absorb initial garbage
-            terminal.write(data);
-            const lines = data.split('\n').filter((l: string) => l.trim());
-            setTerminalOutput(prev => [...prev, ...lines]);
-            if (onTerminalOutput) {
-              lines.forEach((line: string) => onTerminalOutput(line));
+            const filtered = filterJshNoise(data);
+            if (!filtered) return; // Entire chunk was garbage
+            terminal.write(filtered);
+            const lines = filtered.split('\n').filter((l: string) => l.trim()).filter((l: string) => !/^>+$/.test(l.trim()));
+            if (lines.length) {
+              setTerminalOutput(prev => [...prev, ...lines]);
+              if (onTerminalOutput) lines.forEach((line: string) => onTerminalOutput(line));
             }
           },
         })
@@ -1306,26 +1193,41 @@ const StackBlitzIDE = forwardRef<StackBlitzIDEHandle, StackBlitzIDEProps>(functi
       ));
 
       // ── Clean start sequence ──
-      // Wait for ALL jsh startup noise to finish, then clear screen and show a fresh prompt.
-      // jsh emits garbled welcome text + a prompt with a long hash path.
-      // We absorb it all via suppressOutput, then clear the display.
+      // jsh emits garbled welcome text + prompt with long path during startup.
+      // Problem: even after suppression ends, jsh continues outputting prompt
+      // redraw characters (>>>>>>). Solution: send \n while still suppressed
+      // so jsh finishes its prompt cycle, wait, then clear and unsuppress,
+      // then send another \n for the final clean prompt.
 
-      // Wait for jsh to fully settle (1.5s is generous)
+      // Phase 1: Wait for initial jsh boot noise
       await new Promise(r => setTimeout(r, 1500));
 
-      // Un-suppress FIRST so the next writes to xterm from jsh actually display
-      suppressOutput = false;
+      // Phase 2: Send Enter WHILE STILL SUPPRESSED — jsh processes it,
+      // outputs a prompt response (which gets absorbed by suppress)
+      if (inputWriter) {
+        try { await inputWriter.write('\n'); } catch { /* ok */ }
+      }
 
-      // Clear the xterm display (not the jsh process — it's still running)
+      // Phase 3: Wait for jsh to finish processing the Enter and all redraws
+      await new Promise(r => setTimeout(r, 800));
+
+      // Phase 4: Clear the xterm screen (while still suppressed)
       terminal.write('\x1b[2J');    // Clear entire screen
       terminal.write('\x1b[H');     // Move cursor to top-left
       terminal.clear();              // Clear scrollback buffer
 
-      // Give jsh a moment, then send Enter to trigger a fresh prompt
-      await new Promise(r => setTimeout(r, 150));
-      if (inputWriter) {
-        try { await inputWriter.write('\n'); } catch { /* ok */ }
-      }
+      // Phase 4b: Inject clean prompt (matches xterm output: ~/project + ❯)
+      // Avoids relying on jsh to emit clean output; guarantees consistent display
+       // xterm-fg-4 (blue) for path
+      terminal.write('~/project\r\n');
+      terminal.write('\x1b[35m');   // xterm-fg-5 (magenta) for prompt char
+      terminal.write('❯ ');
+      terminal.write('\x1b[0m');    // reset
+
+      // Phase 5: Unsuppress
+      suppressOutput = false;
+
+      // Skip second Enter - manual prompt avoids triggering jsh's redraw (>>>>>>)
 
     } catch (err) {
       console.error('Failed to create terminal:', err);
@@ -1443,17 +1345,19 @@ const StackBlitzIDE = forwardRef<StackBlitzIDEHandle, StackBlitzIDEProps>(functi
     return () => window.removeEventListener('keydown', handleTerminalKeys);
   }, [activeTerminalId, clearTerminal, toggleTerminalSearch]);
 
-  // Refit all terminals when active terminal changes (ensures proper sizing on tab switch)
+  // Refit terminal when active terminal changes or when switching back to terminal tab
+  // (panel was hidden with display:none, so xterm had 0x0; must refit when visible again)
   useEffect(() => {
-    if (activeTerminalId) {
+    if (activeTerminalId && bottomPanelTab === 'terminal') {
       const activeTerm = terminals.find(t => t.id === activeTerminalId);
       if (activeTerm?.fitAddon) {
-        setTimeout(() => {
+        const t = setTimeout(() => {
           try { activeTerm.fitAddon.fit(); } catch { /* ok */ }
-        }, 50);
+        }, 100);
+        return () => clearTimeout(t);
       }
     }
-  }, [activeTerminalId, terminals]);
+  }, [activeTerminalId, bottomPanelTab, terminals]);
 
   // Handle create new file - shows input in explorer
   const handleNewFile = (parentPath: string = '/') => {
@@ -1525,18 +1429,19 @@ const StackBlitzIDE = forwardRef<StackBlitzIDEHandle, StackBlitzIDEProps>(functi
 
   // Confirm creating the new file/folder
   const handleConfirmCreate = async () => {
-    if (!containerRef.current || !creatingItem || !newItemName.trim()) {
+    const currentCreating = creatingItemRef.current ?? creatingItem;
+    if (!containerRef.current || !currentCreating || !newItemName.trim()) {
       setCreatingItem(null);
       setNewItemName('');
       return;
     }
 
     try {
-      const itemPath = creatingItem.parentPath === '/' 
+      const itemPath = currentCreating.parentPath === '/' 
         ? `/${newItemName.trim()}` 
-        : `${creatingItem.parentPath}/${newItemName.trim()}`;
+        : `${currentCreating.parentPath}/${newItemName.trim()}`;
       
-      if (creatingItem.type === 'file') {
+      if (currentCreating.type === 'file') {
         await containerRef.current.fs.writeFile(itemPath, '');
         
         // Track file creation for MCP watcher
@@ -1547,7 +1452,7 @@ const StackBlitzIDE = forwardRef<StackBlitzIDEHandle, StackBlitzIDEProps>(functi
             metadata: {
               filePath: itemPath,
               fileName: newItemName.trim(),
-              parentPath: creatingItem.parentPath
+              parentPath: currentCreating.parentPath
             }
           });
         }
@@ -1569,7 +1474,7 @@ const StackBlitzIDE = forwardRef<StackBlitzIDEHandle, StackBlitzIDEProps>(functi
             metadata: {
               filePath: itemPath,
               fileName: newItemName.trim(),
-              parentPath: creatingItem.parentPath,
+              parentPath: currentCreating.parentPath,
               isDirectory: true
             }
           });
@@ -1596,8 +1501,9 @@ const StackBlitzIDE = forwardRef<StackBlitzIDEHandle, StackBlitzIDEProps>(functi
       setCreatingItem(null);
       setNewItemName('');
     } catch (err: any) {
-      console.error(`Failed to create ${creatingItem.type}:`, err);
-      alert(`Failed to create ${creatingItem.type}: ${err.message || err}`);
+      const type = creatingItemRef.current?.type ?? creatingItem?.type ?? 'item';
+      console.error(`Failed to create ${type}:`, err);
+      alert(`Failed to create ${type}: ${err.message || err}`);
     }
   };
 
@@ -1701,6 +1607,26 @@ const StackBlitzIDE = forwardRef<StackBlitzIDEHandle, StackBlitzIDEProps>(functi
     }
   };
 
+  // Handle move file/folder to another folder
+  const handleMove = async (sourcePath: string, targetFolderPath: string) => {
+    if (!containerRef.current) return;
+    const basename = sourcePath.split('/').pop() || sourcePath;
+    const newPath = targetFolderPath === '/' || targetFolderPath === '' ? basename : `${targetFolderPath}/${basename}`;
+    if (sourcePath === newPath) return; // same location
+    try {
+      await containerRef.current.fs.rename(sourcePath, newPath);
+      if (selectedFile === sourcePath) setSelectedFile(newPath);
+      setOpenFiles(prev => prev.map(p => p === sourcePath ? newPath : (p.startsWith(sourcePath + '/') ? newPath + p.slice(sourcePath.length) : p)));
+      await refreshFileTree();
+      if (sessionId) {
+        await trackEvent({ sessionId, eventType: 'file_renamed', metadata: { oldPath: sourcePath, newPath } });
+      }
+    } catch (err: any) {
+      console.error('Failed to move:', err);
+      alert(`Failed to move: ${err.message || err}`);
+    }
+  };
+
   // Handle delete file/folder
   const handleDelete = async (path: string) => {
     if (!containerRef.current) return;
@@ -1790,8 +1716,16 @@ const StackBlitzIDE = forwardRef<StackBlitzIDEHandle, StackBlitzIDEProps>(functi
     );
   }
 
-  if (!isReady) {
-    return null;
+  if (!isReady && !error) {
+    return (
+      <div className="min-h-screen w-full flex items-center justify-center bg-gradient-to-b from-[#0B0B0F] to-[#07070A]">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-500 mx-auto mb-4"></div>
+          <p className="text-zinc-400">Preparing IDE environment...</p>
+          <p className="text-zinc-500 text-xs mt-2">Loading files and verifying workspace</p>
+        </div>
+      </div>
+    );
   }
 
   const breadcrumbs = getBreadcrumbs(selectedFile);
@@ -1988,158 +1922,32 @@ const StackBlitzIDE = forwardRef<StackBlitzIDEHandle, StackBlitzIDEProps>(functi
                   onCollapse={() => setIsExplorerCollapsed(true)}
                   onExpand={() => setIsExplorerCollapsed(false)}
                 >
-                  {/* FIXED: Added box-border and proper overflow handling */}
-                  <div className="h-full border border-zinc-800 bg-zinc-950/70 flex flex-col overflow-hidden rounded-xl box-border">
-                    <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800 shrink-0">
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => {
-                            explorerPanelRef.current?.collapse();
-                            setIsExplorerCollapsed(true);
-                          }}
-                          className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-zinc-200 transition-colors"
-                          title="Collapse Explorer"
-                        >
-                          <ChevronLeft className="h-3.5 w-3.5" />
-                        </button>
-                        <div className="text-xs uppercase text-zinc-400 tracking-wide">Explorer</div>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => handleNewFile('/')}
-                          className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-zinc-200"
-                          title="New File"
-                        >
-                          <FilePlus className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleNewFolder('/')}
-                          className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-zinc-200"
-                          title="New Folder"
-                        >
-                          <FolderPlus className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                    <div className="flex-1 overflow-y-auto overflow-x-hidden p-2">
-                      <div className="space-y-1">
-                        {/* Create New File/Folder Input - only show at root level if parentPath is '/' */}
-                        {creatingItem && creatingItem.parentPath === '/' && (
-                          <div 
-                            className="px-2 py-1.5 border border-emerald-500/50 bg-emerald-500/10 rounded-lg"
-                            style={{ paddingLeft: `${12}px` }}
-                          >
-                            <div className="flex items-center gap-2">
-                              {creatingItem.type === 'folder' ? (
-                                <Folder className="h-3 w-3 text-amber-300 shrink-0" />
-                              ) : (
-                                <span className="text-xs">📄</span>
-                              )}
-                              <input
-                                ref={newItemInputRef}
-                                type="text"
-                                value={newItemName}
-                                onChange={(e) => setNewItemName(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') {
-                                    e.preventDefault();
-                                    if (newItemName.trim()) {
-                                      handleConfirmCreate();
-                                    }
-                                  } else if (e.key === 'Escape') {
-                                    e.preventDefault();
-                                    handleCancelCreate();
-                                  }
-                                }}
-                                onBlur={() => {
-                                  // Cancel if empty on blur
-                                  if (!newItemName.trim()) {
-                                    handleCancelCreate();
-                                  }
-                                }}
-                                placeholder={`Enter ${creatingItem.type} name and press Enter...`}
-                                className="flex-1 bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500"
-                                autoFocus
-                                onClick={(e) => e.stopPropagation()}
-                              />
-                            </div>
-                          </div>
-                        )}
-                        
-                        {fileTree.length > 0 ? (
-                          renderFileTree(fileTree)
-                        ) : (
-                          !creatingItem && (
-                            <div className="text-sm text-zinc-500 px-2 py-1">No files</div>
-                          )
-                        )}
-                      </div>
-                    </div>
-                    {/* Context Menu */}
-                    {contextMenu && (
-                      <>
-                        <div
-                          className="fixed inset-0 z-50"
-                          onClick={() => setContextMenu(null)}
-                        />
-                        <div
-                          className="fixed z-50 bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl py-1 min-w-[160px]"
-                          style={{ left: contextMenu.x, top: contextMenu.y }}
-                        >
-                          <button
-                            onClick={() => {
-                              if (contextMenu.type === 'directory') {
-                                handleNewFile(contextMenu.path);
-                              } else {
-                                const parentPath = contextMenu.path.split('/').slice(0, -1).join('/') || '/';
-                                handleNewFile(parentPath);
-                              }
-                              setContextMenu(null);
-                            }}
-                            className="w-full px-4 py-2 text-left text-sm text-zinc-300 hover:bg-zinc-800 flex items-center gap-2"
-                          >
-                            <FilePlus className="h-4 w-4" />
-                            New File
-                          </button>
-                          {contextMenu.type === 'directory' && (
-                            <button
-                              onClick={() => {
-                                handleNewFolder(contextMenu.path);
-                                setContextMenu(null);
-                              }}
-                              className="w-full px-4 py-2 text-left text-sm text-zinc-300 hover:bg-zinc-800 flex items-center gap-2"
-                            >
-                              <FolderPlus className="h-4 w-4" />
-                              New Folder
-                            </button>
-                          )}
-                          <div className="h-px bg-zinc-800 my-1" />
-                          <button
-                            onClick={() => {
-                              setRenamingFile(contextMenu.path);
-                              const pathParts = contextMenu.path.split('/');
-                              setRenameValue(pathParts[pathParts.length - 1]);
-                              setContextMenu(null);
-                            }}
-                            className="w-full px-4 py-2 text-left text-sm text-zinc-300 hover:bg-zinc-800 flex items-center gap-2"
-                          >
-                            <Edit2 className="h-4 w-4" />
-                            Rename
-                          </button>
-                          <button
-                            onClick={() => {
-                              handleDelete(contextMenu.path);
-                              setContextMenu(null);
-                            }}
-                            className="w-full px-4 py-2 text-left text-sm text-red-400 hover:bg-zinc-800 flex items-center gap-2"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                            Delete
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
+                  <FileExplorer
+                    fileTree={fileTree}
+                    selectedFile={selectedFile}
+                    renamingFile={renamingFile}
+                    renameValue={renameValue}
+                    setRenamingFile={setRenamingFile}
+                    setRenameValue={setRenameValue}
+                    creatingItem={creatingItem}
+                    newItemName={newItemName}
+                    setNewItemName={setNewItemName}
+                    contextMenu={contextMenu}
+                    setContextMenu={setContextMenu}
+                    newItemInputRef={newItemInputRef}
+                    toggleFolder={toggleFolder}
+                    onFileSelect={handleFileSelect}
+                    onRename={handleRename}
+                    onDelete={handleDelete}
+                    onMove={handleMove}
+                    onNewFile={handleNewFile}
+                    onNewFolder={handleNewFolder}
+                    onConfirmCreate={handleConfirmCreate}
+                    onCancelCreate={handleCancelCreate}
+                    getFileIcon={getFileIcon}
+                    onCollapse={() => setIsExplorerCollapsed(true)}
+                    explorerPanelRef={explorerPanelRef}
+                  />
                 </Panel>
 
                 {/* Resize Handle */}
@@ -2564,102 +2372,19 @@ const StackBlitzIDE = forwardRef<StackBlitzIDEHandle, StackBlitzIDEProps>(functi
 
                           {/* ── Console Panel ── */}
                           {bottomPanelTab === 'console' && (
-                            <div className="absolute inset-0 overflow-y-auto bg-[#0B0B0F] font-mono text-xs p-2 space-y-0.5">
-                              {consoleLogs.length === 0 ? (
-                                <div className="flex items-center justify-center h-full text-zinc-500 text-sm">
-                                  <div className="text-center">
-                                    <ScrollText className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                                    <p>Console output will appear here</p>
-                                    <p className="text-[10px] mt-1 opacity-60">npm install, dev server logs, build errors</p>
-                                  </div>
-                                </div>
-                              ) : (
-                                <>
-                                  {consoleLogs.map((log) => (
-                                    <div
-                                      key={log.id}
-                                      className={`flex items-start gap-2 py-0.5 px-1 rounded hover:bg-white/5 ${
-                                        log.type === 'error' ? 'text-red-400 bg-red-950/20' :
-                                        log.type === 'warn' ? 'text-yellow-400 bg-yellow-950/10' :
-                                        log.type === 'success' ? 'text-green-400' :
-                                        log.type === 'info' ? 'text-blue-400' :
-                                        'text-zinc-400'
-                                      }`}
-                                    >
-                                      <span className="shrink-0 mt-0.5">
-                                        {log.type === 'error' && <XCircle className="h-3 w-3" />}
-                                        {log.type === 'warn' && <AlertTriangle className="h-3 w-3" />}
-                                        {log.type === 'success' && <CheckCircle2 className="h-3 w-3" />}
-                                        {log.type === 'info' && <Info className="h-3 w-3" />}
-                                        {log.type === 'output' && <ChevronRight className="h-3 w-3 opacity-40" />}
-                                      </span>
-                                      <span className="flex-1 break-all whitespace-pre-wrap leading-relaxed">{log.message}</span>
-                                      <span className="text-[9px] text-zinc-600 shrink-0 tabular-nums">
-                                        {log.timestamp.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                                      </span>
-                                    </div>
-                                  ))}
-                                  <div ref={consoleEndRef} />
-                                </>
-                              )}
-                            </div>
+                            <ConsolePanel logs={consoleLogs} consoleEndRef={consoleEndRef} />
                           )}
 
                           {/* ── Problems Panel ── */}
                           {bottomPanelTab === 'problems' && (
-                            <div className="absolute inset-0 overflow-y-auto bg-[#0B0B0F] font-mono text-xs p-2">
-                              {problems.length === 0 ? (
-                                <div className="flex items-center justify-center h-full text-zinc-500 text-sm">
-                                  <div className="text-center">
-                                    <CheckCircle2 className="h-8 w-8 mx-auto mb-2 text-green-500/40" />
-                                    <p>No problems detected</p>
-                                    <p className="text-[10px] mt-1 opacity-60">Errors and warnings from the build will appear here</p>
-                                  </div>
-                                </div>
-                              ) : (
-                                <div className="space-y-0.5">
-                                  {problems.map((problem) => (
-                                    <div
-                                      key={problem.id}
-                                      className={`flex items-start gap-2 py-1 px-2 rounded ${
-                                        problem.type === 'error'
-                                          ? 'bg-red-950/30 border-l-2 border-red-500'
-                                          : 'bg-yellow-950/20 border-l-2 border-yellow-500'
-                                      }`}
-                                    >
-                                      <span className="shrink-0 mt-0.5">
-                                        {problem.type === 'error' ? (
-                                          <XCircle className="h-3.5 w-3.5 text-red-400" />
-                                        ) : (
-                                          <AlertTriangle className="h-3.5 w-3.5 text-yellow-400" />
-                                        )}
-                                      </span>
-                                      <div className="flex-1 min-w-0">
-                                        <p className={`break-all whitespace-pre-wrap ${
-                                          problem.type === 'error' ? 'text-red-300' : 'text-yellow-300'
-                                        }`}>
-                                          {problem.message}
-                                        </p>
-                                        {problem.source && (
-                                          <p className="text-[10px] text-zinc-500 mt-0.5">
-                                            Source: {problem.source}
-                                          </p>
-                                        )}
-                                      </div>
-                                      <span className="text-[9px] text-zinc-600 shrink-0 tabular-nums">
-                                        {problem.timestamp.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                                      </span>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
+                            <ProblemsPanel problems={problems} />
                           )}
 
                           {/* ── Terminal Panel ── */}
-                          {bottomPanelTab === 'terminal' && (
+                          {/* Keep mounted when terminals exist so xterm canvas stays attached (avoids empty on tab switch) */}
+                          {(bottomPanelTab === 'terminal' || terminals.length > 0) && (
                             <div
-                              className="absolute inset-0 bg-[#0B0B0F] overflow-hidden font-mono text-xs text-zinc-300"
+                              className={`absolute inset-0 bg-[#0B0B0F] overflow-hidden font-mono text-xs text-zinc-300 ${bottomPanelTab === 'terminal' ? '' : 'hidden'}`}
                               onContextMenu={(e) => {
                                 if (activeTerminalId) {
                                   e.preventDefault();

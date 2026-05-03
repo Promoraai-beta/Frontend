@@ -8,10 +8,16 @@ import { API_BASE_URL } from '@/lib/config';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { AlertCircle, Home, RefreshCw, Loader2, FileX, Clock, CheckCircle2 } from 'lucide-react';
+import { AlertCircle, Home, RefreshCw, Loader2, FileX, Clock, CheckCircle2, ServerCog } from 'lucide-react';
 
 export default function AssessmentWithCodePage() {
   const params = useParams();
+  const routeCode =
+    typeof params?.code === 'string'
+      ? params.code
+      : Array.isArray(params?.code)
+        ? params.code[0]
+        : undefined;
   const router = useRouter();
   const [sessionCode, setSessionCode] = useState<string | null>(null);
   const [sessionData, setSessionData] = useState<any>(null);
@@ -22,6 +28,8 @@ export default function AssessmentWithCodePage() {
   const [isStarting, setIsStarting] = useState(false);
   const [templateFilesReady, setTemplateFilesReady] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  // containerStatus mirrors the server-side field: pending | ready | failed
+  const [containerStatus, setContainerStatus] = useState<string | null>(null);
 
   const loadSession = async (code: string, isRetry = false) => {
     if (isRetry) {
@@ -85,7 +93,11 @@ export default function AssessmentWithCodePage() {
         setSessionData(data.data);
         setError(null);
         setErrorType('unknown');
-        
+
+        // Track container warm-up status from the server
+        const newContainerStatus = data.data.containerStatus ?? null;
+        setContainerStatus(newContainerStatus);
+
         // Log assessment template if available
         if (data.data.assessmentTemplate) {
           console.log('Assessment template loaded:', data.data.assessmentTemplate);
@@ -145,17 +157,16 @@ export default function AssessmentWithCodePage() {
   };
 
   useEffect(() => {
-    const code = params?.code as string;
-    if (!code) {
+    if (!routeCode) {
       setError('Invalid session code');
       setErrorType('invalid_code');
       setLoading(false);
       return;
     }
 
-    setSessionCode(code.toUpperCase());
-    loadSession(code);
-  }, [params]);
+    setSessionCode(routeCode.toUpperCase());
+    loadSession(routeCode);
+  }, [routeCode]);
 
   // Update template files readiness when session data changes
   useEffect(() => {
@@ -173,6 +184,9 @@ export default function AssessmentWithCodePage() {
       }
     }
   }, [sessionData]);
+
+  // No polling needed on the instructions page — containers are guaranteed ready
+  // before the invite is sent. The containerStatus state is read-only for UI display.
 
   const handleStartAssessment = async () => {
     if (!sessionData?.id) return;
@@ -254,51 +268,16 @@ export default function AssessmentWithCodePage() {
           }
         }
         
-        // Determine if template files are needed and if they're available
-        if (!needsFiles) {
-          // Code challenge - no template files needed
-          console.log('✅ Code challenge detected - no template files needed');
-          setTemplateFilesReady(true);
-        } else if (templateFiles && Object.keys(templateFiles).length > 0) {
-          // IDE challenge with template files - ready immediately
-          console.log('✅ IDE challenge - template files available immediately');
-          setTemplateFilesReady(true);
-        } else {
-          // IDE challenge but template files not found
-          // This might happen if template files aren't in the assessment data
-          console.warn('⚠️ IDE challenge but template files not found in response');
-          console.warn('⚠️ Response data:', {
-            hasTemplateFiles: !!data.data.templateFiles,
-            hasContainerTemplateFiles: !!data.data.container?.templateFiles,
-            container: data.data.container,
-            assessmentTemplate: data.data.assessmentTemplate
-          });
-          // Still mark as ready to avoid blocking - StackBlitz can work with empty files
-          setTemplateFilesReady(true);
-        }
-        
+        // Mark template files ready
+        setTemplateFilesReady(true);
         setHasStarted(true);
       } else {
-        alert(`Failed to start session: ${data.error || 'Unknown error'}`);
+        console.error('Start session failed:', data.error);
       }
     } catch (err: any) {
       console.error('Error starting session:', err);
-      
-      let errorMessage = 'Could not connect to server';
-      if (err.name === 'AbortError') {
-        errorMessage = 'Request timed out. Please try again.';
-      } else if (err.message?.includes('Failed to fetch') || err.message?.includes('ERR_CONNECTION_REFUSED') || err.message?.includes('fetch')) {
-        errorMessage = 'Unable to connect to the server. Please ensure the backend server is running on port 5001.';
-      } else if (err.message) {
-        errorMessage = err.message;
-      }
-      
-      alert(`Error starting session: ${errorMessage}`);
     } finally {
-      // Always clear timeout
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
+      if (timeoutId) clearTimeout(timeoutId);
       setIsStarting(false);
     }
   };
@@ -446,6 +425,69 @@ export default function AssessmentWithCodePage() {
 
   // Show instructions page if session hasn't started yet
   if (!hasStarted && sessionData.status === 'pending') {
+    // Container still warming up — show a waiting screen with live polling dots
+    if (containerStatus === 'provisioning') {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 p-4">
+          <Card className="max-w-md w-full border-blue-900/40 bg-gray-900/80 backdrop-blur-sm shadow-2xl">
+            <CardContent className="pt-8 pb-8">
+              <div className="flex flex-col items-center justify-center space-y-6 text-center">
+                <div className="relative">
+                  <div className="absolute inset-0 rounded-full bg-blue-500/20 blur-xl animate-pulse" />
+                  <div className="relative h-20 w-20 rounded-full bg-gradient-to-br from-blue-900/60 to-blue-700/40 border border-blue-700/50 flex items-center justify-center">
+                    <ServerCog className="h-9 w-9 text-blue-400 animate-spin [animation-duration:3s]" />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <h3 className="text-xl font-semibold text-white">Preparing Your Environment</h3>
+                  <p className="text-sm text-gray-400 leading-relaxed max-w-xs">
+                    Your coding environment is being set up. This usually takes 1–3 minutes.
+                    The Start button will appear automatically when it's ready.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="h-2 w-2 bg-blue-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
+                  <div className="h-2 w-2 bg-blue-500 rounded-full animate-bounce [animation-delay:-0.15s]" />
+                  <div className="h-2 w-2 bg-blue-500 rounded-full animate-bounce" />
+                </div>
+                <p className="text-xs text-gray-600">Checking every 5 seconds…</p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      );
+    }
+
+    // Container provisioning failed — show a clear error, not a silent fallback
+    if (containerStatus === 'failed') {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 p-4">
+          <Card className="max-w-md w-full border-red-900/40 bg-gray-900/80 backdrop-blur-sm shadow-2xl">
+            <CardHeader className="text-center pb-4">
+              <div className="mx-auto w-16 h-16 rounded-full bg-red-500/10 border border-red-500/30 flex items-center justify-center mb-3">
+                <AlertCircle className="h-8 w-8 text-red-400" />
+              </div>
+              <CardTitle className="text-xl text-white">Environment Setup Failed</CardTitle>
+              <CardDescription className="text-gray-400 text-sm leading-relaxed">
+                We were unable to prepare your coding environment. Please contact your recruiter to resend the invite.
+              </CardDescription>
+            </CardHeader>
+            <CardFooter className="justify-center">
+              <Button
+                onClick={() => sessionCode && loadSession(sessionCode, true)}
+                variant="outline"
+                className="border-gray-700 text-gray-300 hover:bg-gray-800"
+              >
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Retry
+              </Button>
+            </CardFooter>
+          </Card>
+        </div>
+      );
+    }
+
+    // Container is ready (or not needed) — show the normal instructions + Start button
     return (
       <InstructionsPage
         sessionCode={sessionCode || ''}
@@ -454,6 +496,11 @@ export default function AssessmentWithCodePage() {
         onStart={handleStartAssessment}
         isStarting={isStarting}
         assessmentType={sessionData.assessment?.assessmentType || 'recruiter'}
+        position={sessionData.assessment?.jobTitle || sessionData.assessment?.role || sessionData.assessmentMeta?.jobTitle || sessionData.assessmentMeta?.role}
+        numProblems={
+          Array.isArray(sessionData.assessmentTemplate) ? sessionData.assessmentTemplate.length :
+          sessionData.assessmentMeta?.numProblems || 3
+        }
       />
     );
   }
