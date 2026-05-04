@@ -1,3 +1,5 @@
+import { LandingPageSection } from "@/components/landing/landing-page-width"
+
 const dimensions = [
   {
     n: "01",
@@ -30,7 +32,7 @@ export function PromptIQScore() {
   return (
     <section id="promptiq" className="relative section-canvas">
       <div className="hairline" />
-      <div className="container-prose py-24 md:py-32">
+      <LandingPageSection className="py-24 md:py-32">
         <div className="max-w-3xl">
           <p className="eyebrow mb-6">PromptIQ Score</p>
           <h2 className="display text-4xl md:text-5xl">
@@ -56,7 +58,7 @@ export function PromptIQScore() {
             </div>
           ))}
         </div>
-      </div>
+      </LandingPageSection>
     </section>
   )
 }

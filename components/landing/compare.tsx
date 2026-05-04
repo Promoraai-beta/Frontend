@@ -1,4 +1,5 @@
 import { BrandLogo } from "@/components/landing/brand-logo"
+import { LandingPageSection } from "@/components/landing/landing-page-width"
 import { Check, X, Minus } from "lucide-react"
 
 type Cell = { text: string; mark?: "check" | "x" | "dash" }
@@ -104,7 +105,7 @@ export function Compare() {
   return (
     <section id="compare" className="relative section-canvas">
       <div className="hairline" />
-      <div className="container-prose py-24 md:py-32">
+      <LandingPageSection className="py-24 md:py-32">
         <div className="max-w-3xl">
           <p className="eyebrow mb-6">Compare</p>
           <h2 className="display text-4xl md:text-5xl">
@@ -213,7 +214,7 @@ export function Compare() {
             )
           })}
         </div>
-      </div>
+      </LandingPageSection>
     </section>
   )
 }

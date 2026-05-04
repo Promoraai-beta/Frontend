@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { Plus } from "lucide-react"
+import { LandingPageSection } from "@/components/landing/landing-page-width"
 
 const faqs = [
   {
@@ -52,7 +53,8 @@ export function FAQ() {
         }}
       />
 
-      <div className="mx-auto w-full max-w-3xl px-6 md:px-10 py-20 md:py-24 relative">
+      <LandingPageSection className="py-20 md:py-24 relative">
+        <div className="max-w-3xl mx-auto">
         <div className="flex items-end justify-between gap-6 mb-10 md:mb-12">
           <div>
             <p className="eyebrow mb-3">— Frequently asked</p>
@@ -140,7 +142,8 @@ export function FAQ() {
             Talk to us directly →
           </a>
         </div>
-      </div>
+        </div>
+      </LandingPageSection>
     </section>
   )
 }

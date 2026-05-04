@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button"
 import { ArrowRight } from "lucide-react"
+import { LandingPageSection } from "@/components/landing/landing-page-width"
 
 export function ClosingCTA() {
   return (
@@ -28,7 +29,7 @@ export function ClosingCTA() {
           transform: "translateX(-50%)",
         }}
       />
-      <div className="container-prose relative py-32 md:py-44 text-center">
+      <LandingPageSection className="relative py-32 md:py-44 text-center">
         <h2 className="display text-4xl md:text-6xl max-w-4xl mx-auto">
           The interview that matches{" "}
           <span className="display-italic">how work actually happens.</span>
@@ -52,7 +53,7 @@ export function ClosingCTA() {
             <ArrowRight className="ml-1" />
           </Button>
         </div>
-      </div>
+      </LandingPageSection>
     </section>
   )
 }

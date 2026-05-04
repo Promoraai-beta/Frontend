@@ -1,3 +1,5 @@
+import { LandingPageSection } from "@/components/landing/landing-page-width"
+
 const blocks = [
   {
     lead: "The incumbents bolted AI on.",
@@ -17,7 +19,7 @@ export function Problem() {
   return (
     <section id="problem" className="relative section-ink">
       <div className="hairline" />
-      <div className="container-prose py-24 md:py-32">
+      <LandingPageSection className="py-24 md:py-32">
         <div className="max-w-3xl">
           <p className="eyebrow mb-6">The Problem</p>
           <h2 className="display text-4xl md:text-5xl">
@@ -47,7 +49,7 @@ export function Problem() {
             </div>
           ))}
         </div>
-      </div>
+      </LandingPageSection>
     </section>
   )
 }

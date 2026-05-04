@@ -1,3 +1,5 @@
+import { LandingPageSection } from "@/components/landing/landing-page-width"
+
 const stats = [
   { n: "7x", label: "Demand growth", body: "Jobs requiring AI fluency, 2024 to 2026." },
   { n: "48%", label: "Assessment volume", body: "Rise in technical assessments globally." },
@@ -8,7 +10,7 @@ export function Stats() {
   return (
     <section className="relative section-canvas">
       <div className="hairline" />
-      <div className="container-prose py-20 md:py-28">
+      <LandingPageSection className="py-20 md:py-28">
         <div
           className="grid md:grid-cols-3 gap-px border-t border-b"
           style={{ borderColor: "hsl(var(--hairline))" }}
@@ -33,7 +35,7 @@ export function Stats() {
             </div>
           ))}
         </div>
-      </div>
+      </LandingPageSection>
     </section>
   )
 }

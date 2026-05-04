@@ -1,4 +1,5 @@
 import { FileText, Sparkles, Eye } from "lucide-react"
+import { LandingPageSection } from "@/components/landing/landing-page-width"
 
 const steps = [
   {
@@ -39,7 +40,7 @@ export function HowItWorks() {
       />
       <div className="hairline opacity-40" />
 
-      <div className="container-prose relative pt-16">
+      <LandingPageSection className="relative pt-16">
         <div className="max-w-3xl">
           <p className="eyebrow mb-6">How It Works</p>
           <h2 className="display text-4xl md:text-5xl">
@@ -144,7 +145,7 @@ export function HowItWorks() {
             })}
           </ol>
         </div>
-      </div>
+      </LandingPageSection>
     </section>
   )
 }

@@ -1,3 +1,5 @@
+import { LandingPageSection } from "@/components/landing/landing-page-width"
+
 const cards = [
   {
     label: "The PromptIQ Score",
@@ -21,7 +23,7 @@ export function WhatYouSee() {
   return (
     <section className="relative section-ink">
       <div className="hairline" />
-      <div className="container-prose py-24 md:py-32">
+      <LandingPageSection className="py-24 md:py-32">
         <div className="max-w-3xl">
           <p className="eyebrow mb-6">What You Get</p>
           <h2 className="display text-4xl md:text-5xl">
@@ -46,7 +48,7 @@ export function WhatYouSee() {
             </div>
           ))}
         </div>
-      </div>
+      </LandingPageSection>
     </section>
   )
 }

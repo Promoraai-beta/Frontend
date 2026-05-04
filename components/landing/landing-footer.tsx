@@ -1,4 +1,5 @@
 import { PromoraMark } from "@/components/landing/promora-mark"
+import { LandingPageSection } from "@/components/landing/landing-page-width"
 
 const cols = [
   {
@@ -18,7 +19,7 @@ const cols = [
 export function LandingFooter() {
   return (
     <footer className="relative section-ink-deep">
-      <div className="container-prose pt-20 pb-12 grid gap-12 md:grid-cols-12">
+      <LandingPageSection className="pt-20 pb-12" innerClassName="grid gap-12 md:grid-cols-12">
         <div className="md:col-span-5">
           <div className="flex items-center gap-2.5">
             <PromoraMark size={28} className="text-foreground" />
@@ -51,10 +52,10 @@ export function LandingFooter() {
             </div>
           ))}
         </div>
-      </div>
-      <div
-        className="container-prose pt-6 pb-8 flex items-center justify-between border-t"
-        style={{ borderColor: "hsl(var(--foreground) / 0.1)" }}
+      </LandingPageSection>
+      <LandingPageSection
+        className="pt-6 pb-8 border-t border-foreground/10"
+        innerClassName="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
       >
         <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
           © {new Date().getFullYear()} Promora, Inc.
@@ -71,7 +72,7 @@ export function LandingFooter() {
             </svg>
           </a>
         </div>
-      </div>
+      </LandingPageSection>
     </footer>
   )
 }
