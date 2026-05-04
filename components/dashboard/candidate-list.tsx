@@ -5,7 +5,6 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import type { Candidate } from "@/lib/mock-data"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
 import { ArrowLeft, UserPlus } from "lucide-react"
 import { InviteCandidateModal } from "@/components/dashboard/invite-candidate-modal"
 
@@ -21,11 +20,10 @@ interface CandidateListProps {
 
 function AvatarInitials({ name }: { name: string }) {
   const parts = name.trim().split(" ")
-  const initials = parts.length >= 2
-    ? `${parts[0][0]}${parts[parts.length - 1][0]}`
-    : name.slice(0, 2)
+  const initials =
+    parts.length >= 2 ? `${parts[0][0]}${parts[parts.length - 1][0]}` : name.slice(0, 2)
   return (
-    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-violet-600 to-indigo-700 text-xs font-semibold text-white flex-shrink-0">
+    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-xs font-semibold text-accent">
       {initials.toUpperCase()}
     </div>
   )
@@ -34,9 +32,9 @@ function AvatarInitials({ name }: { name: string }) {
 function PromptIQBar({ score }: { score: number }) {
   return (
     <div className="flex items-center gap-2">
-      <span className="w-7 text-right text-sm font-semibold tabular-nums text-white">{score}</span>
-      <div className="w-24 h-1.5 rounded-full bg-zinc-800 overflow-hidden">
-        <div className="h-full rounded-full bg-white" style={{ width: `${score}%` }} />
+      <span className="w-7 text-right font-mono text-sm font-semibold tabular-nums text-foreground">{score}</span>
+      <div className="h-1.5 w-24 overflow-hidden rounded-full bg-muted">
+        <div className="h-full rounded-full bg-accent" style={{ width: `${score}%` }} />
       </div>
     </div>
   )
@@ -46,114 +44,145 @@ function StatusBadge({ status }: { status: Candidate["assessmentStatus"] }) {
   switch (status) {
     case "completed":
       return (
-        <Badge className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-medium">
-          <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />Completed
+        <Badge className="border border-emerald-500/25 bg-emerald-500/10 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+          <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400" />
+          Completed
         </Badge>
       )
     case "in-progress":
       return (
-        <Badge className="bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs font-medium">
-          <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-amber-400" />In Progress
+        <Badge className="border border-amber-500/25 bg-amber-500/10 text-xs font-medium text-amber-800 dark:text-amber-400">
+          <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-amber-500 dark:bg-amber-400" />
+          In progress
         </Badge>
       )
     case "not-started":
       return (
-        <Badge className="bg-zinc-700/60 text-zinc-400 border border-zinc-600/30 text-xs font-medium">
-          <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-zinc-500" />Invited
+        <Badge className="border border-border bg-muted/80 text-xs font-medium text-muted-foreground">
+          <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-muted-foreground/50" />
+          Invited
         </Badge>
       )
   }
 }
 
 export function CandidateList({ candidates, jobTitle, onBack, isActive, assessmentId, onRefresh }: CandidateListProps) {
-  const router = useRouter()
   const [inviteOpen, setInviteOpen] = useState(false)
 
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return "—"
-    try { return new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric" }) }
-    catch { return "—" }
+    try {
+      return new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric" })
+    } catch {
+      return "—"
+    }
   }
 
   return (
-    <div className="space-y-5">
-      {/* Breadcrumb + title */}
+    <div className="space-y-8">
       <div>
-        <div className="flex items-center gap-2 text-xs text-zinc-500 mb-4">
-          <button onClick={onBack} className="flex items-center gap-1.5 hover:text-zinc-300 transition-colors">
-            <ArrowLeft className="h-3.5 w-3.5" />Positions
+        <div className="mb-6 flex items-center gap-2 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+          <button
+            type="button"
+            onClick={onBack}
+            className="flex items-center gap-1.5 rounded-full px-2 py-1 transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            Positions
           </button>
-          <span>/</span>
-          <span className="text-zinc-400">{jobTitle}</span>
+          <span className="text-border">/</span>
+          <span className="text-foreground/90">{jobTitle}</span>
         </div>
 
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <h2 className="text-2xl font-bold text-white">{jobTitle}</h2>
-            <Badge className={`text-xs font-medium ${
-              isActive
-                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                : "bg-zinc-700/50 text-zinc-400 border border-zinc-600/20"
-            }`}>
-              <span className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full ${isActive ? "bg-emerald-400" : "bg-zinc-500"}`} />
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 className="display text-2xl text-foreground md:text-3xl">{jobTitle}</h2>
+            <Badge
+              className={`border px-2 py-0.5 text-[10px] font-medium ${
+                isActive
+                  ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                  : "border-border bg-muted/80 text-muted-foreground"
+              }`}
+            >
+              <span
+                className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full ${isActive ? "bg-emerald-500 dark:bg-emerald-400" : "bg-muted-foreground/50"}`}
+              />
               {isActive ? "Active" : "Inactive"}
             </Badge>
           </div>
           <Button
             size="sm"
             onClick={() => setInviteOpen(true)}
-            className="bg-white text-black hover:bg-zinc-200 gap-2 text-sm font-medium"
+            className="gap-2 rounded-full bg-accent px-5 font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-accent-foreground hover:bg-accent-deep"
           >
-            <UserPlus className="h-4 w-4" />
-            Invite Candidate
+            <UserPlus className="h-3.5 w-3.5" />
+            Invite candidate
           </Button>
         </div>
       </div>
 
-      {/* Candidates table */}
-      <div className="rounded-xl border border-zinc-800/60 bg-zinc-950/60 backdrop-blur-sm overflow-hidden">
-        <div className="grid grid-cols-[2fr_2fr_1fr_1.5fr_1.5fr_1fr] gap-3 border-b border-zinc-800/60 px-5 py-3">
-          {["NAME", "EMAIL", "INVITED", "STATUS", "PROMPTIQ", "ACTION"].map((col) => (
-            <span key={col} className="text-[10px] font-semibold tracking-widest text-zinc-500 uppercase">{col}</span>
+      <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-[inset_0_1px_0_0_hsl(var(--foreground)/0.04)]">
+        <div className="grid grid-cols-[2fr_2fr_1fr_1.5fr_1.5fr_1fr] gap-3 border-b border-border px-5 py-3">
+          {["Name", "Email", "Invited", "Status", "PromptIQ", "Action"].map((col) => (
+            <span key={col} className="eyebrow text-[10px] tracking-[0.14em] text-muted-foreground">
+              {col}
+            </span>
           ))}
         </div>
 
         {candidates.length === 0 ? (
           <div className="px-5 py-14 text-center">
-            <p className="text-sm text-zinc-500 mb-3">No candidates yet.</p>
-            <Button size="sm" onClick={() => setInviteOpen(true)} className="bg-white text-black hover:bg-zinc-200 gap-2">
-              <UserPlus className="h-4 w-4" />Invite First Candidate
+            <p className="mb-4 text-sm text-muted-foreground">No candidates yet.</p>
+            <Button
+              size="sm"
+              onClick={() => setInviteOpen(true)}
+              className="gap-2 rounded-full bg-accent font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-accent-foreground hover:bg-accent-deep"
+            >
+              <UserPlus className="h-3.5 w-3.5" />
+              Invite first candidate
             </Button>
           </div>
         ) : (
           candidates.map((candidate, i) => (
             <div
               key={candidate.id}
-              className={`grid grid-cols-[2fr_2fr_1fr_1.5fr_1.5fr_1fr] gap-3 items-center px-5 py-3.5 hover:bg-zinc-900/40 transition-colors ${
-                i < candidates.length - 1 ? "border-b border-zinc-800/40" : ""
+              className={`grid grid-cols-[2fr_2fr_1fr_1.5fr_1.5fr_1fr] items-center gap-3 px-5 py-3.5 transition-colors hover:bg-muted/40 ${
+                i < candidates.length - 1 ? "border-b border-border" : ""
               }`}
             >
-              <div className="flex items-center gap-2.5 min-w-0">
+              <div className="flex min-w-0 items-center gap-2.5">
                 <AvatarInitials name={candidate.name} />
-                <span className="text-sm font-medium text-white truncate">{candidate.name}</span>
+                <span className="truncate text-sm font-medium text-foreground">{candidate.name}</span>
               </div>
-              <span className="text-sm text-zinc-400 truncate font-mono text-xs">{candidate.email}</span>
-              <span className="text-sm text-zinc-500">{formatDate(candidate.attemptedAt)}</span>
-              <div><StatusBadge status={candidate.assessmentStatus} /></div>
+              <span className="truncate font-mono text-xs text-muted-foreground">{candidate.email}</span>
+              <span className="text-sm text-muted-foreground">{formatDate(candidate.attemptedAt)}</span>
               <div>
-                {candidate.score !== undefined
-                  ? <PromptIQBar score={candidate.score} />
-                  : <span className="text-sm text-zinc-600">—</span>}
+                <StatusBadge status={candidate.assessmentStatus} />
+              </div>
+              <div>
+                {candidate.score !== undefined ? (
+                  <PromptIQBar score={candidate.score} />
+                ) : (
+                  <span className="text-sm text-muted-foreground">—</span>
+                )}
               </div>
               <div>
                 {candidate.assessmentStatus === "completed" ? (
-                  <Link href={`/dashboard/results/${candidate.sessionId || candidate.id}`}
-                    className="text-xs text-zinc-400 hover:text-white transition-colors">View Report</Link>
+                  <Link
+                    href={`/dashboard/results/${candidate.sessionId || candidate.id}`}
+                    className="font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-accent transition-colors hover:text-accent-deep"
+                  >
+                    View report
+                  </Link>
                 ) : candidate.assessmentStatus === "in-progress" ? (
-                  <Link href={`/dashboard/live/${candidate.sessionId || candidate.id}`}
-                    className="text-xs text-zinc-400 hover:text-white transition-colors">View Live</Link>
+                  <Link
+                    href={`/dashboard/live/${candidate.sessionId || candidate.id}`}
+                    className="font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-accent transition-colors hover:text-accent-deep"
+                  >
+                    View live
+                  </Link>
                 ) : (
-                  <span className="text-xs text-zinc-600">—</span>
+                  <span className="text-xs text-muted-foreground">—</span>
                 )}
               </div>
             </div>
@@ -165,7 +194,10 @@ export function CandidateList({ candidates, jobTitle, onBack, isActive, assessme
         open={inviteOpen}
         onOpenChange={setInviteOpen}
         defaultAssessmentId={assessmentId}
-        onSuccess={() => { setInviteOpen(false); onRefresh?.() }}
+        onSuccess={() => {
+          setInviteOpen(false)
+          onRefresh?.()
+        }}
       />
     </div>
   )

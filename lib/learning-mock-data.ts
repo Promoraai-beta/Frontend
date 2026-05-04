@@ -1,3 +1,5 @@
+import type { SkillGap } from "@/components/candidate/skill-gap-card"
+
 export const learningPaths = {
   currentGoal: {
     role: "Senior Software Engineer",
@@ -10,7 +12,7 @@ export const learningPaths = {
     { skill: "Distributed Systems", current: 65, target: 85, priority: "high" },
     { skill: "Leadership", current: 58, target: 80, priority: "medium" },
     { skill: "Cloud Architecture", current: 78, target: 92, priority: "medium" },
-  ],
+  ] satisfies SkillGap[],
   learningModules: [
     {
       id: "1",

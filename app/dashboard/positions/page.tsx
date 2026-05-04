@@ -3,14 +3,16 @@
 import { useState, useEffect } from "react"
 import { ProtectedRoute } from "@/components/protected-route"
 import { Button } from "@/components/ui/button"
-import { LayoutGrid, List, Plus } from "lucide-react"
-import { RecruiterNavbar } from "@/components/dashboard/recruiter-navbar"
-import { JobCard } from "@/components/dashboard/job-card"
+import { LayoutGrid, List, Plus, ChevronLeft, ChevronRight } from "lucide-react"
 import { CandidateList } from "@/components/dashboard/candidate-list"
-import { AnimatedBackground } from "@/components/animated-background"
 import { api } from "@/lib/api"
 import { CreateAssessmentModal } from "@/components/dashboard/create-assessment-modal"
 import { motion } from "framer-motion"
+import { DashboardEditorialShell } from "@/components/dashboard/editorial/dashboard-editorial-shell"
+import { DashboardPageHeader } from "@/components/dashboard/editorial/dashboard-page-header"
+import { JobCard } from "@/components/dashboard/job-card"
+
+const PAGE_SIZE = 9
 
 export default function PositionsPage() {
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
@@ -20,6 +22,7 @@ export default function PositionsPage() {
   const [loading, setLoading] = useState(true)
   const [createModalOpen, setCreateModalOpen] = useState(false)
   const [activeFilter, setActiveFilter] = useState<"all" | "active" | "inactive">("all")
+  const [page, setPage] = useState(1)
 
   const loadData = async () => {
     try {
@@ -28,8 +31,8 @@ export default function PositionsPage() {
       const url = activeParam ? `/api/assessments?active=${activeParam}` : "/api/assessments"
 
       const [assessmentsRes, sessionsRes] = await Promise.all([
-        api.get(url).then(r => r.json()).then(d => d.success ? d.data || [] : []).catch(() => []),
-        api.get("/api/sessions").then(r => r.json()).then(d => d.success ? d.data || [] : []).catch(() => []),
+        api.get(url).then((r) => r.json()).then((d) => (d.success ? d.data || [] : [])).catch(() => []),
+        api.get("/api/sessions").then((r) => r.json()).then((d) => (d.success ? d.data || [] : [])).catch(() => []),
       ])
       setAssessments(assessmentsRes)
       setSessions(sessionsRes)
@@ -38,15 +41,18 @@ export default function PositionsPage() {
     }
   }
 
-  useEffect(() => { loadData() }, [activeFilter])
+  useEffect(() => {
+    setPage(1)
+    loadData()
+  }, [activeFilter])
 
   const jobs = assessments.map((a) => {
-    const asSessions = sessions.filter(s => s.assessmentId === a.id)
-    const completed  = asSessions.filter(s => s.status === "submitted").length
-    const attempted  = asSessions.filter(s => s.status === "active" || s.status === "submitted").length
-    const scores     = asSessions.map(s => s.score).filter((sc): sc is number => typeof sc === "number" && sc > 0)
-    const avgScore   = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0
-    const isActive   = a.isActive !== undefined ? a.isActive : true
+    const asSessions = sessions.filter((s) => s.assessmentId === a.id)
+    const completed = asSessions.filter((s) => s.status === "submitted").length
+    const attempted = asSessions.filter((s) => s.status === "active" || s.status === "submitted").length
+    const scores = asSessions.map((s) => s.score).filter((sc): sc is number => typeof sc === "number" && sc > 0)
+    const avgScore = scores.length ? Math.round(scores.reduce((x, y) => x + y, 0) / scores.length) : 0
+    const isActive = a.isActive !== undefined ? a.isActive : true
     return {
       id: a.id,
       title: a.jobTitle || a.role || "Untitled",
@@ -65,15 +71,31 @@ export default function PositionsPage() {
     }
   })
 
-  const activeCount   = jobs.filter(j => j.isActive).length
-  const inactiveCount = jobs.filter(j => !j.isActive).length
+  const activeCount = jobs.filter((j) => j.isActive).length
+  const inactiveCount = jobs.filter((j) => !j.isActive).length
+
+  const total = jobs.length
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+
+  useEffect(() => {
+    setPage((p) => Math.min(Math.max(1, p), totalPages))
+  }, [totalPages])
+
+  const safePage = Math.min(Math.max(1, page), totalPages)
+  const startIdx = (safePage - 1) * PAGE_SIZE
+  const pageJobs = jobs.slice(startIdx, startIdx + PAGE_SIZE)
+  const showingFrom = total === 0 ? 0 : startIdx + 1
+  const showingTo = startIdx + pageJobs.length
 
   const handleToggleStatus = async (id: string, current: boolean) => {
     try {
       const r = await api.patch(`/api/assessments/${id}/status`, { isActive: !current })
       const d = await r.json()
-      if (d.success) loadData(); else alert(d.error || "Failed")
-    } catch (e: any) { alert(e.message) }
+      if (d.success) loadData()
+      else alert(d.error || "Failed")
+    } catch (e: any) {
+      alert(e.message)
+    }
   }
 
   const handleDelete = async (id: string) => {
@@ -81,23 +103,42 @@ export default function PositionsPage() {
     try {
       const r = await api.delete(`/api/assessments/${id}`)
       const d = await r.json()
-      if (d.success) { loadData(); if (selectedJobId === id) setSelectedJobId(null) }
-      else alert(d.error || "Failed")
-    } catch (e: any) { alert(e.message) }
+      if (d.success) {
+        loadData()
+        if (selectedJobId === id) setSelectedJobId(null)
+      } else alert(d.error || "Failed")
+    } catch (e: any) {
+      alert(e.message)
+    }
   }
 
-  const selectedJob = jobs.find(j => j.id === selectedJobId)
+  const selectedJob = jobs.find((j) => j.id === selectedJobId)
   const filteredCandidates = selectedJobId
     ? sessions
-        .filter(s => s.assessmentId === selectedJobId)
-        .map(s => {
-          const fmt = (d: any) => d ? new Date(d).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true }) : undefined
+        .filter((s) => s.assessmentId === selectedJobId)
+        .map((s) => {
+          const fmt = (d: any) =>
+            d
+              ? new Date(d).toLocaleString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                  hour: "numeric",
+                  minute: "2-digit",
+                  hour12: true,
+                })
+              : undefined
           return {
-            id: s.id, sessionId: s.id,
+            id: s.id,
+            sessionId: s.id,
             name: s.candidateName || "Unknown",
             email: s.candidateEmail || "",
             jobId: s.assessmentId,
-            assessmentStatus: (s.status === "pending" ? "not-started" : s.status === "active" ? "in-progress" : "completed") as any,
+            assessmentStatus: (s.status === "pending"
+              ? "not-started"
+              : s.status === "active"
+                ? "in-progress"
+                : "completed") as any,
             score: s.score,
             attemptedAt: fmt(s.startedAt),
             submittedAt: fmt(s.submittedAt),
@@ -107,81 +148,172 @@ export default function PositionsPage() {
         })
     : []
 
+  const pillGroup = "inline-flex rounded-full border border-hairline bg-muted/20 p-1 backdrop-blur-sm"
+
   return (
     <ProtectedRoute requiredRole="recruiter">
-      <div className="relative min-h-screen bg-background">
-        <AnimatedBackground />
-        <RecruiterNavbar />
-
-        <div className="container mx-auto px-4 pt-20 pb-12 md:px-6 md:pt-24 lg:px-8 lg:pt-28 max-w-7xl">
-
-          {!selectedJobId ? (
-            <div className="space-y-6">
-              {/* Header */}
-              <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}
-                className="flex items-start justify-between gap-4">
-                <div>
-                  <h1 className="text-3xl font-bold text-white">Positions</h1>
-                  {!loading && (
-                    <p className="mt-1 text-sm text-zinc-500">
-                      {jobs.length} total · {activeCount} active
-                      {inactiveCount > 0 && ` · ${inactiveCount} inactive`}
-                    </p>
-                  )}
-                </div>
-                <Button onClick={() => setCreateModalOpen(true)}
-                  className="bg-white text-black hover:bg-zinc-200 gap-2 font-medium flex-shrink-0">
-                  <Plus className="h-4 w-4" />New Position
+      <DashboardEditorialShell animateEnter={!selectedJobId}>
+        {!selectedJobId ? (
+          <>
+            <DashboardPageHeader
+              eyebrow="Pipeline"
+              title="Open"
+              italic="positions."
+              description={
+                loading ? (
+                  "Loading…"
+                ) : (
+                  <>
+                    {jobs.length} total · {activeCount} live
+                    {inactiveCount > 0 ? ` · ${inactiveCount} inactive` : ""}
+                  </>
+                )
+              }
+              actions={
+                <Button
+                  type="button"
+                  variant="accentSolid"
+                  onClick={() => setCreateModalOpen(true)}
+                  className="gap-2 rounded-full px-5 font-mono text-[11px] font-semibold uppercase tracking-[0.14em]"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  New position
                 </Button>
-              </motion.div>
+              }
+            />
 
-              {/* Controls */}
-              <div className="flex items-center justify-between">
-                <div className="flex gap-1 rounded-lg border border-zinc-800 bg-zinc-900/50 p-0.5">
-                  {(["all", "active", "inactive"] as const).map(f => (
-                    <button key={f} onClick={() => setActiveFilter(f)}
-                      className={`rounded-md px-3 py-1 text-xs font-medium transition-colors capitalize ${activeFilter === f ? "bg-white text-black" : "text-zinc-400 hover:text-white"}`}>
-                      {f}
-                    </button>
-                  ))}
-                </div>
-                <div className="flex gap-1 rounded-lg border border-zinc-800 bg-zinc-900/50 p-0.5">
-                  <button onClick={() => setViewMode("grid")}
-                    className={`rounded-md p-1.5 transition-colors ${viewMode === "grid" ? "bg-white text-black" : "text-zinc-400 hover:text-white"}`}>
-                    <LayoutGrid className="h-3.5 w-3.5" />
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className={pillGroup} role="tablist" aria-label="Filter positions">
+                {(["all", "active", "inactive"] as const).map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeFilter === f}
+                    onClick={() => setActiveFilter(f)}
+                    className={`rounded-full px-4 py-2 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] transition-colors ${
+                      activeFilter === f
+                        ? "bg-foreground text-background"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {f}
                   </button>
-                  <button onClick={() => setViewMode("list")}
-                    className={`rounded-md p-1.5 transition-colors ${viewMode === "list" ? "bg-white text-black" : "text-zinc-400 hover:text-white"}`}>
-                    <List className="h-3.5 w-3.5" />
-                  </button>
-                </div>
+                ))}
               </div>
 
-              {/* Cards */}
-              {loading ? (
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {Array.from({ length: 6 }).map((_, i) => (
-                    <div key={i} className="h-48 animate-pulse rounded-xl bg-zinc-900/60 border border-zinc-800/60" />
-                  ))}
-                </div>
-              ) : jobs.length > 0 ? (
-                <div className={viewMode === "grid" ? "grid gap-4 md:grid-cols-2 lg:grid-cols-3" : "space-y-3"}>
-                  {jobs.map(job => (
-                    <JobCard key={job.id} job={job} onClick={() => setSelectedJobId(job.id)}
-                      isSelected={false} onToggleStatus={handleToggleStatus} onDelete={handleDelete}
-                      avgScore={job.avgScore} />
-                  ))}
-                </div>
-              ) : (
-                <div className="rounded-xl border border-zinc-800/60 bg-zinc-950/60 py-20 text-center">
-                  <p className="text-zinc-500 mb-4">No positions yet</p>
-                  <Button onClick={() => setCreateModalOpen(true)} className="bg-white text-black hover:bg-zinc-200 gap-2">
-                    <Plus className="h-4 w-4" />Create Your First Position
-                  </Button>
-                </div>
-              )}
+              <div className={pillGroup} role="group" aria-label="Layout">
+                <button
+                  type="button"
+                  aria-pressed={viewMode === "grid"}
+                  onClick={() => setViewMode("grid")}
+                  className={`rounded-full p-2 transition-colors ${
+                    viewMode === "grid"
+                      ? "bg-foreground text-background"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <LayoutGrid className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={viewMode === "list"}
+                  onClick={() => setViewMode("list")}
+                  className={`rounded-full p-2 transition-colors ${
+                    viewMode === "list"
+                      ? "bg-foreground text-background"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <List className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </div>
-          ) : (
+
+            {loading ? (
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {Array.from({ length: 9 }).map((_, i) => (
+                  <div
+                    key={i}
+                    className="h-48 animate-pulse rounded-2xl border border-hairline bg-muted/25"
+                  />
+                ))}
+              </div>
+            ) : jobs.length > 0 ? (
+              <>
+                <div
+                  className={
+                    viewMode === "grid" ? "grid gap-4 md:grid-cols-2 lg:grid-cols-3" : "flex flex-col gap-3"
+                  }
+                >
+                  {pageJobs.map((job) => (
+                    <JobCard
+                      key={job.id}
+                      job={job}
+                      onClick={() => setSelectedJobId(job.id)}
+                      isSelected={false}
+                      onToggleStatus={handleToggleStatus}
+                      onDelete={handleDelete}
+                      avgScore={job.avgScore}
+                    />
+                  ))}
+                </div>
+
+                <div className="flex flex-col items-center justify-between gap-4 rounded-2xl border border-hairline bg-muted/[0.08] px-5 py-5 md:flex-row md:px-8">
+                  <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                    Showing <span className="text-foreground">{showingFrom}</span>–
+                    <span className="text-foreground">{showingTo}</span> of{" "}
+                    <span className="text-foreground">{total}</span>
+                  </p>
+                  {totalPages > 1 && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        aria-label="Previous page"
+                        disabled={safePage <= 1}
+                        onClick={() => setPage((p) => Math.max(1, p - 1))}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-hairline bg-card px-4 py-2 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground transition-colors hover:bg-muted/40 disabled:pointer-events-none disabled:opacity-35"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                        Prev
+                      </button>
+                      <span className="min-w-[7rem] text-center font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                        Page {safePage} / {totalPages}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label="Next page"
+                        disabled={safePage >= totalPages}
+                        onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-hairline bg-card px-4 py-2 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground transition-colors hover:bg-muted/40 disabled:pointer-events-none disabled:opacity-35"
+                      >
+                        Next
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="rounded-3xl border border-hairline bg-card px-6 py-20 text-center shadow-[inset_0_1px_0_0_hsl(var(--foreground)/0.04)]">
+                <p className="font-serif text-xl text-foreground">No positions yet</p>
+                <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+                  Create a role to invite candidates and collect PromptIQ signals.
+                </p>
+                <Button
+                  type="button"
+                  variant="accentSolid"
+                  onClick={() => setCreateModalOpen(true)}
+                  className="mt-6 gap-2 rounded-full px-6 font-mono text-[11px] font-semibold uppercase tracking-[0.14em]"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Create first position
+                </Button>
+              </div>
+            )}
+          </>
+        ) : (
+          <motion.div key="detail" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}>
             <CandidateList
               candidates={filteredCandidates}
               jobTitle={selectedJob?.title || "Assessment"}
@@ -190,9 +322,9 @@ export default function PositionsPage() {
               assessmentId={selectedJobId ?? undefined}
               onRefresh={loadData}
             />
-          )}
-        </div>
-      </div>
+          </motion.div>
+        )}
+      </DashboardEditorialShell>
 
       <CreateAssessmentModal open={createModalOpen} onOpenChange={setCreateModalOpen} onSuccess={loadData} />
     </ProtectedRoute>

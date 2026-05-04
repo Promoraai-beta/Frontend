@@ -19,6 +19,8 @@ import {
   Eye, Send, Plus, Check, Shield,
 } from "lucide-react"
 import { useRouter } from "next/navigation"
+import { cn } from "@/lib/utils"
+import { RECRUITER_DASH_MAIN_INNER } from "@/components/dashboard/editorial/dashboard-editorial-shell"
 
 type TabId = "overview" | "personal" | "company" | "preferences"
 
@@ -243,7 +245,8 @@ export default function ProfilePage() {
         <AnimatedBackground />
         <RecruiterNavbar />
 
-        <div className="relative z-10 container mx-auto px-4 pt-20 pb-16 md:pt-24 lg:pt-28 max-w-6xl space-y-6">
+        <div className="relative z-10 w-full px-4 pt-20 pb-16 md:pt-24 lg:pt-28">
+          <div className={cn(RECRUITER_DASH_MAIN_INNER, "space-y-6")}>
 
           {/* Toasts */}
           {success && (
@@ -624,6 +627,7 @@ export default function ProfilePage() {
               </div>
             </div>
           )}
+        </div>
         </div>
 
         {/* Crop modals */}

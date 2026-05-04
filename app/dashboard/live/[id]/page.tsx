@@ -190,7 +190,11 @@ function LiveMonitoringPageContent() {
       console.log(`${streamType}: Appending chunk ${chunkIndex} (${chunkData.length} bytes)`);
 
       appendingRef.current = true;
-      sourceBuffer.appendBuffer(chunkData);
+      const ab = chunkData.buffer.slice(
+        chunkData.byteOffset,
+        chunkData.byteOffset + chunkData.byteLength
+      ) as ArrayBuffer
+      sourceBuffer.appendBuffer(ab)
 
       // Try to play video after first chunk is appended
       if (isFirstAppend && videoRef.current) {
@@ -368,7 +372,7 @@ function LiveMonitoringPageContent() {
           });
 
           sourceBuffer.addEventListener('error', (e) => {
-            const error = (e.target as SourceBuffer)?.error;
+            const error = (e.target as unknown as { error?: MediaError | null }).error;
             const errorDetails = {
               error: error,
               errorCode: error?.code,
@@ -909,7 +913,7 @@ function LiveMonitoringPageContent() {
   }
 
   // Helper function to initialize simple sequential video player
-  const initializeVideoPlayer = (chunks: any[], videoRef: React.RefObject<HTMLVideoElement>, streamType: string) => {
+  const initializeVideoPlayer = (chunks: any[], videoRef: React.RefObject<HTMLVideoElement | null>, streamType: string) => {
     // Ensure chunks is an array before processing
     if (!Array.isArray(chunks) || chunks.length === 0 || !videoRef.current) {
       console.log(`${streamType}: No chunks or no video element`);
@@ -953,10 +957,13 @@ function LiveMonitoringPageContent() {
       const chunkQueue = streamType === 'webcam' ? webcamChunkQueue.current : screenshareChunkQueue.current;
       
       if (chunkQueue.length > 0) {
-        const blobUrl = chunkQueue.shift();
-        if (blobUrl) {
-          console.log(`Loading live ${streamType} chunk from queue`);
-          video.src = blobUrl;
+        const queued = chunkQueue.shift()
+        if (queued) {
+          console.log(`Loading live ${streamType} chunk from queue`)
+          const raw = queued.data
+          const ab = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength) as ArrayBuffer
+          const blobUrl = URL.createObjectURL(new Blob([ab], { type: "video/mp4" }))
+          video.src = blobUrl
           video.play().catch(e => {
             if (e.name === 'NotAllowedError') {
               console.log(`${streamType}: Autoplay blocked for live chunk`);

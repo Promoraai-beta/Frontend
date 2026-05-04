@@ -1,0 +1,159 @@
+/* PromoraAI Navigation
+   Fixed top bar. Fades from --ink to transparent so it merges
+   into the hero rather than creating a hard horizontal cut.    */
+
+.nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 64px;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--margin-h);
+  /* Gradient creates the "floating on void" effect */
+  background: linear-gradient(to bottom, var(--ink) 0%, transparent 100%);
+  /* Nav itself is a non-blocking layer; individual items are interactive */
+  pointer-events: none;
+}
+
+.nav > * {
+  pointer-events: auto;
+}
+
+/* ─── Wordmark ─────────────────────────────────────────────────────────── */
+
+.wordmark {
+  font-family: var(--font-ui);
+  font-size: var(--fs-13);
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+/* ─── Desktop Nav Items ────────────────────────────────────────────────── */
+
+.navRight {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+/* Hover: a 1px rule slides in from the left — width equals text width */
+.navLink {
+  position: relative;
+  font-family: var(--font-ui);
+  font-size: var(--fs-13);
+  font-weight: 400;
+  color: var(--text-secondary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.navLink::after {
+  content: '';
+  position: absolute;
+  bottom: -3px;
+  left: 0;
+  width: 0;
+  height: 1px;
+  background-color: var(--text-secondary);
+  transition: width 200ms ease-out;
+}
+
+.navLink:hover::after {
+  width: 100%;
+}
+
+/* "Request Access" is slightly brighter */
+.navLinkPrimary {
+  color: var(--text-primary);
+}
+
+.navLinkPrimary::after {
+  background-color: var(--text-primary);
+}
+
+/* Vertical separator between "Request Access" and "Log In" */
+.separator {
+  width: 1px;
+  height: 14px;
+  background-color: var(--pm-border-active);
+  flex-shrink: 0;
+}
+
+/* ─── Mobile Hamburger (visible on small screens) ─────────────────────── */
+
+.hamburger {
+  display: none;
+  background: none;
+  border: none;
+  padding: 8px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  line-height: 0;
+}
+
+@media (max-width: 640px) {
+  .navRight {
+    display: none;
+  }
+
+  .hamburger {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+/* ─── Mobile Full-Screen Overlay ───────────────────────────────────────── */
+
+.mobileOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background-color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.closeBtn {
+  position: absolute;
+  top: 20px;
+  right: var(--margin-h);
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-family: var(--font-ui);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 8px;
+  line-height: 1;
+}
+
+.mobileLinks {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.mobileLink {
+  font-family: var(--font-ui);
+  font-size: 48px;
+  font-weight: 300;
+  color: var(--text-secondary);
+  text-decoration: none;
+  padding: 8px 0;
+  transition: color 200ms ease;
+}
+
+.mobileLink:hover {
+  color: var(--text-primary);
+}

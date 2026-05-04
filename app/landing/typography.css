@@ -1,0 +1,27 @@
+/* PromoraAI Typography System
+   Four fonts, four voices:
+   Fraunces   — display / editorial  (italic only — hero + CTA headline)
+   DM Mono    — instrument / score   (measurements, labels, terminals)
+   Newsreader — narrative / body     (founder story, long-form paragraphs)
+   DM Sans    — functional / UI      (nav, buttons, metadata, labels)     */
+
+/* ─── Google Fonts Imports ─────────────────────────────────────────────────
+   Fraunces: italic variable font only — full opsz (9–144) and wght (100–900)
+   DM Mono:  non-variable, Regular + Medium
+   Newsreader: variable — full opsz (6–72) and wght, both upright and italic
+   DM Sans: variable — full opsz and wght (lazy-loaded, lower priority)     */
+
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@1,9..144,100..900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..900;1,9..40,100..900&display=swap');
+
+/* ─── Font Family Custom Properties ───────────────────────────────────────
+   Scoped to .promora-landing to avoid overriding app-wide font variables.  */
+
+.promora-landing {
+  --font-display: 'Fraunces', Georgia, serif;
+  --font-mono:    'DM Mono', 'Courier New', monospace;
+  --font-body:    'Newsreader', Georgia, serif;
+  --font-ui:      'DM Sans', system-ui, sans-serif;
+}

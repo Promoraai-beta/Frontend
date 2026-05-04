@@ -305,6 +305,7 @@ const AzureContainerIDE = forwardRef<AzureContainerIDEHandle, AzureContainerIDEP
               let pollCount = 0;
 
               while (!cancelledRef.current && Date.now() - pollStart < pollTimeout) {
+                const elapsedSec = ((Date.now() - pollStart) / 1000).toFixed(1)
                 // Keep the calm 'setting up' message — no raw timer visible to the candidate.
                 setProvisioningStep('Setting up your coding environment...');
                 try {
@@ -315,11 +316,11 @@ const AzureContainerIDE = forwardRef<AzureContainerIDEHandle, AzureContainerIDEP
                   });
                   // fetch resolved → server is up
                   ready = true;
-                  if (DEBUG_AZURE_IDE) console.log(`[AzureContainerIDE] VS Code ready after ${elapsed}s (${pollCount} polls)`);
+                  if (DEBUG_AZURE_IDE) console.log(`[AzureContainerIDE] VS Code ready after ${elapsedSec}s (${pollCount} polls)`);
                   break;
                 } catch {
                   // fetch threw → server not yet reachable; keep waiting
-                  if (DEBUG_AZURE_IDE) console.log(`[AzureContainerIDE] VS Code not ready yet (${elapsed}s, attempt ${pollCount + 1})`);
+                  if (DEBUG_AZURE_IDE) console.log(`[AzureContainerIDE] VS Code not ready yet (${elapsedSec}s, attempt ${pollCount + 1})`);
                 }
                 pollCount++;
                 await new Promise((resolve) => setTimeout(resolve, pollInterval));

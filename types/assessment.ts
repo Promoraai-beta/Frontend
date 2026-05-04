@@ -37,7 +37,7 @@ export interface RecordingState {
   screenStream: MediaStream | null;
 }
 
-export type TabType = 'task' | 'code' | 'ide' | 'design' | 'sheets' | 'database' | 'docs';
+export type TabType = 'task' | 'code' | 'ide' | 'design' | 'sheets' | 'database' | 'docs' | 'chat';
 
 export interface DBColumn {
   name: string;

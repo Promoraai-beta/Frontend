@@ -135,7 +135,7 @@ function ResetPasswordForm() {
       if (data.success) {
         setSuccess(true)
         setTimeout(() => {
-          router.push("/login")
+          router.push("/auth")
         }, 2000)
       } else {
         setError(data.error || "Failed to reset password")
@@ -321,7 +321,7 @@ function ResetPasswordForm() {
             </form>
           )}
           <div className="mt-4 text-center text-sm text-zinc-400">
-            <Link href="/login" className="text-white hover:underline">
+            <Link href="/auth" className="text-white hover:underline">
               Back to Sign in
             </Link>
           </div>

@@ -21,7 +21,7 @@ export function ProtectedRoute({ children, requiredRole, allowedRoles }: Protect
 
   useEffect(() => {
     if (!isLoading && !user) {
-      router.push("/login")
+      router.push("/auth")
       return
     }
 
@@ -40,7 +40,7 @@ export function ProtectedRoute({ children, requiredRole, allowedRoles }: Protect
         } else if (user.role === "candidate") {
           router.push("/candidate/assessments")
         } else {
-          router.push("/login")
+          router.push("/auth")
         }
         return
       }

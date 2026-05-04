@@ -11,6 +11,11 @@ import {
   Sparkles, Settings2, ChevronRight, Loader2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
+import {
+  RECRUITER_DASH_MAIN_OUTER,
+  RECRUITER_DASH_MAIN_INNER,
+} from "@/components/dashboard/editorial/dashboard-editorial-shell"
 
 // ── Brand icons ──────────────────────────────────────────────────────────────
 function VsCodeIcon({ className }: { className?: string }) {
@@ -319,7 +324,8 @@ export default function ReviewPage() {
       <div className="min-h-screen bg-zinc-950 text-white">
         <RecruiterNavbar />
 
-        <div className="mx-auto max-w-7xl px-6 pt-24 pb-28">
+        <div className={cn(RECRUITER_DASH_MAIN_OUTER, "pb-28")}>
+          <div className={RECRUITER_DASH_MAIN_INNER}>
           {loading ? (
             <div className="flex items-center justify-center py-32 gap-3 text-zinc-500">
               <Loader2 className="h-5 w-5 animate-spin" />
@@ -517,10 +523,13 @@ export default function ReviewPage() {
             </motion.div>
           )}
         </div>
+        </div>
 
         {/* Fixed bottom bar */}
         <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-zinc-800/80 bg-zinc-950/95 backdrop-blur-md">
-          <div className="mx-auto max-w-7xl px-6 py-4 flex items-center justify-between gap-6">
+          <div className="w-full px-4 py-4">
+            <div className={RECRUITER_DASH_MAIN_INNER}>
+              <div className="flex items-center justify-between gap-6">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <p className="text-sm font-semibold text-white truncate">{title}</p>
@@ -545,6 +554,8 @@ export default function ReviewPage() {
                   <><CheckCircle2 className="h-4 w-4" />Publish Position<ChevronRight className="h-4 w-4" /></>
                 )}
               </Button>
+            </div>
+              </div>
             </div>
           </div>
         </div>

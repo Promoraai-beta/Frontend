@@ -24,7 +24,7 @@ const candidatePlans = [
       "Share your profile with employers",
     ],
     cta: "Get Started Free",
-    ctaLink: "/register",
+    ctaLink: "/auth?tab=signup",
   },
   {
     name: "Candidate Pro",
@@ -40,7 +40,7 @@ const candidatePlans = [
       "History and progress tracking",
     ],
     cta: "Upgrade to Pro",
-    ctaLink: "/register",
+    ctaLink: "/auth?tab=signup",
   },
 ]
 
@@ -61,7 +61,7 @@ const recruiterPlans = [
       "Email support",
     ],
     cta: "Start Free Trial",
-    ctaLink: "/register",
+    ctaLink: "/auth?tab=signup",
   },
   {
     name: "Recruiter Pro",
@@ -78,7 +78,7 @@ const recruiterPlans = [
       "Priority support",
     ],
     cta: "Start Free Trial",
-    ctaLink: "/register",
+    ctaLink: "/auth?tab=signup",
   },
 ]
 
@@ -191,7 +191,7 @@ export default function PricingPage() {
                           : "bg-zinc-900 text-white hover:bg-zinc-800"
                       }`}
                     >
-                      <Link href={plan.ctaLink || "/register"}>{plan.cta}</Link>
+                      <Link href={plan.ctaLink || "/auth?tab=signup"}>{plan.cta}</Link>
                     </Button>
                   </motion.div>
                 ))}

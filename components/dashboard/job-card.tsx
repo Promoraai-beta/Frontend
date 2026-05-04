@@ -37,7 +37,6 @@ function timeAgo(dateStr: string) {
 
 export function JobCard({ job, onClick, isSelected, onToggleStatus, onDelete, avgScore }: JobCardProps) {
   const isActive = job.isActive !== undefined ? job.isActive : job.status === 'active'
-  const total = Math.max(job.candidatesSelected, 1)
   const completed = job.candidatesCompleted
   const inProgress = job.candidatesAttempted - completed
 
@@ -55,41 +54,41 @@ export function JobCard({ job, onClick, isSelected, onToggleStatus, onDelete, av
       whileHover={{ y: -2 }}
       transition={{ duration: 0.15 }}
       onClick={onClick}
-      className={`group relative cursor-pointer rounded-xl border bg-zinc-950/60 backdrop-blur-sm transition-all duration-200 hover:bg-zinc-900/60 ${
-        isSelected ? "border-white/30" : "border-zinc-800/70 hover:border-zinc-700"
-      } ${!isActive ? "opacity-60" : ""}`}
+      className={`group relative cursor-pointer rounded-2xl border bg-card transition-all duration-200 hover:border-accent/35 hover:shadow-[0_12px_40px_-24px_hsl(var(--accent)/0.35)] ${
+        isSelected ? "border-accent/40 ring-1 ring-accent/20" : "border-border"
+      } ${!isActive ? "opacity-[0.72]" : ""}`}
     >
       {/* Top row */}
       <div className="flex items-start justify-between p-4 pb-3">
         <div className="flex-1 min-w-0 pr-2">
-          <h3 className="text-sm font-semibold text-white truncate">{job.title}</h3>
+          <h3 className="truncate text-sm font-semibold text-foreground">{job.title}</h3>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <Badge
-            className={`text-[10px] px-2 py-0 ${
+            className={`border px-2 py-0 text-[10px] font-medium ${
               isActive
-                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                : "bg-zinc-700/50 text-zinc-400 border border-zinc-600/20"
+                ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                : "border-border bg-muted/80 text-muted-foreground"
             }`}
           >
-            <span className={`mr-1 inline-block h-1.5 w-1.5 rounded-full ${isActive ? "bg-emerald-400" : "bg-zinc-500"}`} />
+            <span className={`mr-1 inline-block h-1.5 w-1.5 rounded-full ${isActive ? "bg-emerald-500 dark:bg-emerald-400" : "bg-muted-foreground/60"}`} />
             {isActive ? "Active" : "Inactive"}
           </Badge>
           {(onToggleStatus || onDelete) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-zinc-500 hover:text-white opacity-0 group-hover:opacity-100">
+                <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground opacity-0 hover:bg-muted hover:text-foreground group-hover:opacity-100">
                   <MoreVertical className="h-3.5 w-3.5" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="bg-zinc-900 border-zinc-800">
+              <DropdownMenuContent align="end">
                 {onToggleStatus && (
-                  <DropdownMenuItem onClick={handleToggleStatus} className="text-white hover:bg-zinc-800 cursor-pointer text-sm">
+                  <DropdownMenuItem onClick={handleToggleStatus} className="cursor-pointer text-sm">
                     {isActive ? <><PowerOff className="h-3.5 w-3.5 mr-2" />Deactivate</> : <><Power className="h-3.5 w-3.5 mr-2" />Activate</>}
                   </DropdownMenuItem>
                 )}
                 {onDelete && (
-                  <DropdownMenuItem onClick={handleDelete} className="text-red-400 hover:bg-red-500/10 cursor-pointer text-sm">
+                  <DropdownMenuItem onClick={handleDelete} className="cursor-pointer text-sm text-red-600 focus:text-red-600 dark:text-red-400">
                     <Trash2 className="h-3.5 w-3.5 mr-2" />Delete
                   </DropdownMenuItem>
                 )}
@@ -100,27 +99,27 @@ export function JobCard({ job, onClick, isSelected, onToggleStatus, onDelete, av
       </div>
 
       {/* Chips row */}
-      <div className="flex items-center gap-2 px-4 pb-4 flex-wrap">
-        <span className="flex items-center gap-1 rounded-md bg-zinc-800/60 px-2 py-0.5 text-[11px] text-zinc-400">
+      <div className="flex flex-wrap items-center gap-2 px-4 pb-4">
+        <span className="flex items-center gap-1 rounded-full bg-muted/80 px-2 py-0.5 text-[11px] text-muted-foreground">
           <Users className="h-3 w-3" />
           {job.candidatesSelected}
         </span>
         {job.department && (
-          <span className="rounded-md bg-zinc-800/60 px-2 py-0.5 text-[11px] text-zinc-400">
+          <span className="rounded-full bg-muted/80 px-2 py-0.5 text-[11px] text-muted-foreground">
             {job.department}
           </span>
         )}
-        <span className="flex items-center gap-1 rounded-md bg-zinc-800/60 px-2 py-0.5 text-[11px] text-zinc-400">
+        <span className="flex items-center gap-1 rounded-full bg-muted/80 px-2 py-0.5 text-[11px] text-muted-foreground">
           <Clock className="h-3 w-3" />
           {timeAgo(job.createdAt)}
         </span>
       </div>
 
       {/* Coverage section */}
-      <div className="border-t border-zinc-800/60 px-4 pt-3 pb-3">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-[10px] font-medium tracking-widest text-zinc-500 uppercase">Coverage</span>
-          <span className="text-[11px] font-semibold tabular-nums text-zinc-300">
+      <div className="border-t border-border px-4 pb-3 pt-3">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="eyebrow text-[10px] tracking-[0.14em] text-muted-foreground">Coverage</span>
+          <span className="text-[11px] font-semibold tabular-nums text-foreground">
             {completed}/{job.candidatesSelected || 0}
           </span>
         </div>
@@ -137,34 +136,38 @@ export function JobCard({ job, onClick, isSelected, onToggleStatus, onDelete, av
                   transition={{ duration: 0.3, delay: i * 0.05 }}
                   style={{ originX: 0 }}
                   className={`flex-1 h-1.5 rounded-full ${
-                    isComp ? "bg-white" : isInProg ? "bg-zinc-400" : "bg-zinc-700"
+                    isComp
+                      ? "bg-accent"
+                      : isInProg
+                        ? "bg-muted-foreground/50"
+                        : "bg-muted"
                   }`}
                 />
               )
             })}
             {job.candidatesSelected > 8 && (
-              <span className="text-[10px] text-zinc-500 ml-1">+{job.candidatesSelected - 8}</span>
+              <span className="ml-1 text-[10px] text-muted-foreground">+{job.candidatesSelected - 8}</span>
             )}
           </div>
         ) : (
           <div className="flex gap-1">
             {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="flex-1 h-1.5 rounded-full bg-zinc-800" />
+              <div key={i} className="flex-1 h-1.5 rounded-full bg-muted" />
             ))}
           </div>
         )}
       </div>
 
       {/* View link + avg score */}
-      <div className="border-t border-zinc-800/60 px-4 py-2.5 flex items-center justify-between">
+      <div className="flex items-center justify-between border-t border-border px-4 py-2.5">
         {avgScore !== undefined && avgScore > 0 ? (
-          <span className="text-xs text-zinc-500">
-            Avg IQ <span className="font-semibold text-zinc-300">{avgScore}</span>
+          <span className="text-xs text-muted-foreground">
+            Avg IQ <span className="font-semibold tabular-nums text-foreground">{avgScore}</span>
           </span>
         ) : (
           <span />
         )}
-        <span className="flex items-center gap-1 text-xs text-zinc-500 group-hover:text-zinc-300 transition-colors">
+        <span className="flex items-center gap-1 text-xs text-muted-foreground transition-colors group-hover:text-accent">
           View <ChevronRight className="h-3 w-3" />
         </span>
       </div>

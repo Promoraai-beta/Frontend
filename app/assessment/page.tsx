@@ -3238,9 +3238,16 @@ export default function AssessmentPage({
                     sessionId={sessionData.id}
                     assessmentId={sessionData?.assessmentId || sessionData?.assessment?.id}
                     preProvisionedUrl={sessionData?.containerUrl || null}
-                    onReady={() => setIdeStatus('ready')}
+                    onReady={() =>
+                      setIdeStatus((s) => ({ ...s, isReady: true, isLoading: false, error: null }))
+                    }
                     onError={(error) => {
-                      setIdeStatus('error');
+                      setIdeStatus((s) => ({
+                        ...s,
+                        isReady: false,
+                        isLoading: false,
+                        error,
+                      }));
                       console.error('Azure Container IDE error:', error);
                     }}
                     messages={messages}

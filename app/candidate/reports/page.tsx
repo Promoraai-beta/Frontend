@@ -37,7 +37,7 @@ export default function CandidateReportsPage() {
 
   useEffect(() => {
     if (!user) {
-      router.push("/login")
+      router.push("/auth")
       return
     }
     loadReports()

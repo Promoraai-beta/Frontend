@@ -13,7 +13,6 @@ interface DashboardStatsData {
   avgScore: number
 }
 
-// Arc gauge using the app's white/zinc color palette
 function PromptIQGauge({ value, loading }: { value: number; loading: boolean }) {
   const pct = Math.min(value / 100, 1)
   const r = 38
@@ -30,25 +29,37 @@ function PromptIQGauge({ value, loading }: { value: number; loading: boolean }) 
   const bgLarge = sweepAngle > 180 ? 1 : 0
 
   return (
-    <svg width="100" height="72" viewBox="0 0 100 72">
-      {/* Track */}
+    <svg width="100" height="72" viewBox="0 0 100 72" className="text-foreground">
       <path
         d={`M ${arcX(startAngle)} ${arcY(startAngle)} A ${r} ${r} 0 ${bgLarge} 1 ${arcX(bgEnd)} ${arcY(bgEnd)}`}
-        fill="none" stroke="#27272a" strokeWidth="5" strokeLinecap="round"
+        fill="none"
+        stroke="hsl(var(--hairline))"
+        strokeWidth="5"
+        strokeLinecap="round"
       />
-      {/* Value arc */}
       {!loading && pct > 0 && (
         <path
           d={`M ${arcX(startAngle)} ${arcY(startAngle)} A ${r} ${r} 0 ${largeArc} 1 ${arcX(endAngle)} ${arcY(endAngle)}`}
-          fill="none" stroke="white" strokeWidth="5" strokeLinecap="round"
+          fill="none"
+          stroke="hsl(var(--accent))"
+          strokeWidth="5"
+          strokeLinecap="round"
         />
       )}
-      {/* Score */}
-      <text x={cx} y={cy - 2} textAnchor="middle" fontSize="20" fontWeight="700" fill="white">
+      <text x={cx} y={cy - 2} textAnchor="middle" fontSize="20" fontWeight="600" fill="hsl(var(--foreground))" className="font-serif">
         {loading ? "—" : value}
       </text>
-      <text x={cx} y={cy + 12} textAnchor="middle" fontSize="7" fill="#71717a" fontWeight="500" letterSpacing="1">
-        PROMPTIQ
+      <text
+        x={cx}
+        y={cy + 12}
+        textAnchor="middle"
+        fontSize="7"
+        fill="hsl(var(--muted-foreground))"
+        fontWeight="600"
+        letterSpacing="0.12em"
+        className="font-mono uppercase"
+      >
+        PromptIQ
       </text>
     </svg>
   )
@@ -112,8 +123,8 @@ export function DashboardStats() {
       trendUp: true,
       sub: "this week",
       icon: Users,
-      iconColor: "text-blue-400",
-      iconBg: "bg-blue-500/10",
+      iconColor: "text-accent",
+      iconBg: "bg-accent-soft/70",
     },
     {
       label: "Active",
@@ -122,7 +133,7 @@ export function DashboardStats() {
       trendUp: true,
       sub: "new today",
       icon: Clock,
-      iconColor: "text-amber-400",
+      iconColor: "text-amber-600 dark:text-amber-400",
       iconBg: "bg-amber-500/10",
     },
     {
@@ -132,7 +143,7 @@ export function DashboardStats() {
       trendUp: true,
       sub: "this week",
       icon: CheckCircle2,
-      iconColor: "text-emerald-400",
+      iconColor: "text-emerald-600 dark:text-emerald-400",
       iconBg: "bg-emerald-500/10",
     },
   ]
@@ -147,29 +158,34 @@ export function DashboardStats() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, delay: i * 0.08 }}
         >
-          <Card className="group relative overflow-hidden border-zinc-800/60 bg-zinc-950/60 backdrop-blur-sm hover:border-zinc-700 hover:bg-zinc-900/60 transition-all duration-300 h-full">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div className={`rounded-lg p-1.5 ${stat.iconBg}`}>
-                  {loading
-                    ? <Loader2 className={`h-4 w-4 ${stat.iconColor} animate-spin`} />
-                    : <stat.icon className={`h-4 w-4 ${stat.iconColor}`} />
-                  }
+          <Card className="group relative h-full overflow-hidden rounded-2xl border border-border bg-card shadow-none transition-colors duration-300 hover:border-accent/25">
+            <CardContent className="p-5">
+              <div className="mb-3 flex items-center justify-between">
+                <div className={`rounded-xl p-2 ${stat.iconBg}`}>
+                  {loading ? (
+                    <Loader2 className={`h-4 w-4 ${stat.iconColor} animate-spin`} />
+                  ) : (
+                    <stat.icon className={`h-4 w-4 ${stat.iconColor}`} />
+                  )}
                 </div>
                 {!loading && (
-                  <div className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                    stat.trendUp ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-400"
-                  }`}>
+                  <div
+                    className={`flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide ${
+                      stat.trendUp
+                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                        : "bg-red-500/10 text-red-600 dark:text-red-400"
+                    }`}
+                  >
                     {stat.trendUp ? <TrendingUp className="h-2.5 w-2.5" /> : <TrendingDown className="h-2.5 w-2.5" />}
                     {stat.trend}
                   </div>
                 )}
               </div>
-              <p className="text-3xl font-bold text-white tabular-nums">
+              <p className="font-serif text-3xl font-medium tabular-nums tracking-tight text-foreground">
                 {loading ? "—" : stat.value}
               </p>
-              <p className="mt-0.5 text-[10px] text-zinc-600">{stat.sub}</p>
-              <p className="mt-2 text-xs font-medium text-zinc-400">{stat.label}</p>
+              <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground">{stat.sub}</p>
+              <p className="mt-3 text-xs font-medium text-muted-foreground">{stat.label}</p>
             </CardContent>
           </Card>
         </motion.div>
@@ -182,29 +198,29 @@ export function DashboardStats() {
         transition={{ duration: 0.4, delay: 0.28 }}
         className="col-span-2 lg:col-span-1"
       >
-        <Card className="group relative overflow-hidden border-zinc-800/60 bg-zinc-950/60 backdrop-blur-sm hover:border-zinc-600 transition-all duration-300 h-full">
-          <div className="absolute inset-0 bg-gradient-to-br from-white/3 to-transparent pointer-events-none" />
-          <CardContent className="relative p-4">
-            <div className="flex items-start justify-between mb-1">
+        <Card className="group relative h-full overflow-hidden rounded-2xl border border-border bg-card shadow-none transition-colors duration-300 hover:border-accent/30">
+          <CardContent className="relative p-5">
+            <div className="mb-1 flex items-start justify-between gap-2">
               <div>
-                <p className="text-xs font-medium text-zinc-400">Avg. PromptIQ</p>
-                <p className="text-[10px] text-zinc-600 mt-0.5">vs last month</p>
+                <p className="text-xs font-medium text-muted-foreground">Avg. PromptIQ</p>
+                <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground/80">
+                  vs last month
+                </p>
               </div>
-              {/* Promora exclusive badge */}
-              <div className="flex items-center gap-1 rounded-full bg-zinc-800 border border-zinc-700/60 px-2 py-0.5">
-                <Sparkles className="h-2.5 w-2.5 text-zinc-300" />
-                <span className="text-[9px] font-semibold text-zinc-300 uppercase tracking-wide">Exclusive</span>
+              <div className="flex items-center gap-1 rounded-full border border-border bg-accent-soft/50 px-2 py-0.5">
+                <Sparkles className="h-2.5 w-2.5 text-accent" />
+                <span className="font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-accent">Exclusive</span>
               </div>
             </div>
 
-            <div className="flex items-center justify-center my-1">
+            <div className="my-1 flex items-center justify-center">
               <PromptIQGauge value={stats.avgScore} loading={loading} />
             </div>
 
-            <div className="flex items-center justify-center gap-1">
-              <TrendingUp className="h-3 w-3 text-emerald-400" />
-              <span className="text-xs text-emerald-400 font-medium">+12%</span>
-              <span className="text-xs text-zinc-500">this month</span>
+            <div className="flex items-center justify-center gap-1.5">
+              <TrendingUp className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+              <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">+12%</span>
+              <span className="text-xs text-muted-foreground">this month</span>
             </div>
           </CardContent>
         </Card>

@@ -10,6 +10,7 @@ export interface User {
   role: string
   company?: string | null
   onboardingCompleted?: boolean
+  createdAt?: string
 }
 
 export const AUTH_STORAGE_KEY = "recruiter_auth_user"

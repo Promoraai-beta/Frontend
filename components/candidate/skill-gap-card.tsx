@@ -3,7 +3,7 @@
 import { motion } from "framer-motion"
 import { TrendingUp } from "lucide-react"
 
-interface SkillGap {
+export interface SkillGap {
   skill: string
   current: number
   target: number

@@ -28,7 +28,7 @@ export function CandidateNavbar() {
       } else if (user.role === 'admin') {
         router.push('/admin/dashboard')
       } else {
-        router.push('/login')
+        router.push('/auth')
       }
     }
   }, [user, router])

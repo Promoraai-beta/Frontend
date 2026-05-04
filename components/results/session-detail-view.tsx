@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import { FileText, AlertTriangle, Video, Monitor, Code, User, CheckCircle, MessageSquare, Bot, UserCircle, ExternalLink } from 'lucide-react'
+import { FileText, AlertTriangle, Video, Monitor, Code, User, CheckCircle, MessageSquare, Bot, UserCircle, ExternalLink, Home, LayoutGrid } from 'lucide-react'
 import { API_BASE_URL } from '@/lib/config'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -10,6 +10,7 @@ import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
 import { Download } from 'lucide-react'
 import { logger } from '@/lib/logger'
+import { cn } from '@/lib/utils'
 
 interface SessionDetailViewProps {
   session: any
@@ -318,112 +319,126 @@ export function SessionDetailView({
   // Chat message count
   const chatCount = aiInteractions.filter(i => i.promptText || i.responseText || i.eventType === 'prompt_sent' || i.eventType === 'response_received').length
 
+  const verticalTabClass = (id: typeof activeTab) =>
+    cn(
+      "relative flex w-full items-center gap-3 rounded-md py-2.5 pl-4 pr-2 text-left text-sm font-medium tracking-tight transition-colors outline-none",
+      "focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+      activeTab === id
+        ? "text-foreground before:pointer-events-none before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-full before:bg-foreground"
+        : "text-muted-foreground hover:bg-muted/45 hover:text-foreground"
+    )
+
+  const tabCountClass = (id: typeof activeTab) =>
+    cn(
+      "ml-auto shrink-0 rounded-full px-2 py-px text-[11px] font-semibold tabular-nums",
+      activeTab === id ? "bg-foreground/10 text-foreground dark:bg-background/20 dark:text-foreground" : "bg-muted text-muted-foreground"
+    )
+
   return (
     <div className="space-y-6">
-      {/* Tabs */}
-      <div className="border-b border-border">
-        <div className="flex gap-1 overflow-x-auto">
-          <button
-            onClick={() => setActiveTab('overview')}
-            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
-              activeTab === 'overview'
-                ? 'text-foreground border-b-2 border-foreground'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h8" /></svg>
-            Overview
-          </button>
-          {/* Submissions Tab - Only show for leetcode-style */}
-          {isLeetcodeStyle && (
+      <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:gap-10">
+        {/* Vertical tabs — left rail + active indicator */}
+        <nav className="w-full shrink-0 lg:w-52 xl:w-56" aria-label="Session detail tabs">
+          <div role="tablist" className="flex flex-col gap-0.5 border-b border-hairline pb-4 lg:border-b-0 lg:pb-0">
             <button
-              onClick={() => setActiveTab('submissions')}
-              className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
-                activeTab === 'submissions'
-                  ? 'text-foreground border-b-2 border-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'overview'}
+              onClick={() => setActiveTab('overview')}
+              className={verticalTabClass('overview')}
             >
-              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-              Submissions {filteredSubmissions.length > 0 && <span className="rounded-full bg-muted px-1.5 text-[10px]">{filteredSubmissions.length}</span>}
+              <Home className="h-4 w-4 shrink-0 opacity-90" strokeWidth={1.75} />
+              <span className="min-w-0 flex-1 truncate">Overview</span>
             </button>
-          )}
-          {/* Chat History Tab - Show full conversation */}
-          <button
-            onClick={() => setActiveTab('chat-history')}
-            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
-              activeTab === 'chat-history'
-                ? 'text-foreground border-b-2 border-foreground'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <MessageSquare className="h-3.5 w-3.5" />
-            Chat History {chatCount > 0 && <span className="rounded-full bg-muted px-1.5 text-[10px]">{chatCount}</span>}
-          </button>
-          {/* Agent Insights Tab - Only for recruiters, shows detailed agent analysis */}
-          {!isCandidateView && agentInsights && (
+            {isLeetcodeStyle && (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === 'submissions'}
+                onClick={() => setActiveTab('submissions')}
+                className={verticalTabClass('submissions')}
+              >
+                <LayoutGrid className="h-4 w-4 shrink-0 opacity-90" strokeWidth={1.75} />
+                <span className="min-w-0 flex-1 truncate">Submissions</span>
+                {filteredSubmissions.length > 0 && (
+                  <span className={tabCountClass('submissions')}>{filteredSubmissions.length}</span>
+                )}
+              </button>
+            )}
             <button
-              onClick={() => setActiveTab('agent-insights')}
-              className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
-                activeTab === 'agent-insights'
-                  ? 'text-foreground border-b-2 border-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'chat-history'}
+              onClick={() => setActiveTab('chat-history')}
+              className={verticalTabClass('chat-history')}
             >
-              <Bot className="h-3.5 w-3.5" />
-              Agent Insights
+              <MessageSquare className="h-4 w-4 shrink-0 opacity-90" strokeWidth={1.75} />
+              <span className="min-w-0 flex-1 truncate">Chat history</span>
+              {chatCount > 0 && <span className={tabCountClass('chat-history')}>{chatCount}</span>}
             </button>
-          )}
-          {/* My Insights Tab - Only for candidates, shows simplified feedback */}
-          {isCandidateView && agentInsights && (
-            <button
-              onClick={() => setActiveTab('my-insights')}
-              className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
-                activeTab === 'my-insights'
-                  ? 'text-foreground border-b-2 border-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <Bot className="h-3.5 w-3.5" />
-              My Insights
-            </button>
-          )}
-          {/* Code Tab — shows candidate's final workspace files (IDE challenge sessions) */}
-          {!isCandidateView && session?.finalCode && (
-            <button
-              onClick={() => setActiveTab('code')}
-              className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
-                activeTab === 'code'
-                  ? 'text-foreground border-b-2 border-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <Code className="h-3.5 w-3.5" />
-              Code {parsedFiles ? `(${Object.keys(parsedFiles).length} files)` : ''}
-            </button>
-          )}
-          {/* Recordings Tab - Only for recruiter assessments */}
-          {!isCandidateView && (
-          <button
-            onClick={() => setActiveTab('recordings')}
-            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
-              activeTab === 'recordings'
-                ? 'text-foreground border-b-2 border-foreground'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <Video className="h-3.5 w-3.5" />
-            Recordings {normalizedVideoChunks.length > 0 && (() => {
-              const streamCount = [
-                normalizedVideoChunks.some(c => c.streamType === 'webcam'),
-                normalizedVideoChunks.some(c => c.streamType === 'screenshare')
-              ].filter(Boolean).length || 1
-              return <span className="rounded-full bg-muted px-1.5 text-[10px]">{streamCount}</span>
-            })()}
-          </button>
-          )}
-        </div>
-      </div>
+            {!isCandidateView && agentInsights && (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === 'agent-insights'}
+                onClick={() => setActiveTab('agent-insights')}
+                className={verticalTabClass('agent-insights')}
+              >
+                <Bot className="h-4 w-4 shrink-0 opacity-90" strokeWidth={1.75} />
+                <span className="min-w-0 flex-1 truncate">Agent insights</span>
+              </button>
+            )}
+            {isCandidateView && agentInsights && (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === 'my-insights'}
+                onClick={() => setActiveTab('my-insights')}
+                className={verticalTabClass('my-insights')}
+              >
+                <Bot className="h-4 w-4 shrink-0 opacity-90" strokeWidth={1.75} />
+                <span className="min-w-0 flex-1 truncate">My insights</span>
+              </button>
+            )}
+            {!isCandidateView && session?.finalCode && (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === 'code'}
+                onClick={() => setActiveTab('code')}
+                className={verticalTabClass('code')}
+              >
+                <Code className="h-4 w-4 shrink-0 opacity-90" strokeWidth={1.75} />
+                <span className="min-w-0 flex-1 truncate">Code</span>
+                {parsedFiles && <span className={tabCountClass('code')}>{Object.keys(parsedFiles).length}</span>}
+              </button>
+            )}
+            {!isCandidateView && (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === 'recordings'}
+                onClick={() => setActiveTab('recordings')}
+                className={verticalTabClass('recordings')}
+              >
+                <Video className="h-4 w-4 shrink-0 opacity-90" strokeWidth={1.75} />
+                <span className="min-w-0 flex-1 truncate">Recordings</span>
+                {normalizedVideoChunks.length > 0 &&
+                  (() => {
+                    const streamCount =
+                      [
+                        normalizedVideoChunks.some((c) => c.streamType === 'webcam'),
+                        normalizedVideoChunks.some((c) => c.streamType === 'screenshare'),
+                      ].filter(Boolean).length || 1
+                    return <span className={tabCountClass('recordings')}>{streamCount}</span>
+                  })()}
+              </button>
+            )}
+          </div>
+        </nav>
+
+        {/* Tab panels */}
+        <div className="min-w-0 flex-1 rounded-xl border border-hairline bg-card p-4 shadow-[inset_0_1px_0_0_hsl(var(--foreground)/0.04)] md:rounded-2xl md:p-6 lg:min-h-[min(70vh,720px)] lg:p-8">
 
       {/* Overview Tab */}
       {activeTab === 'overview' && (() => {
@@ -2559,6 +2574,8 @@ export function SessionDetailView({
           )}
         </div>
       )}
+        </div>
+      </div>
     </div>
   )
 }

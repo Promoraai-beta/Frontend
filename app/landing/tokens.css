@@ -1,0 +1,53 @@
+/* PromoraAI Design Tokens
+   ALL variables are scoped to .promora-landing to avoid conflicts with globals.css.
+   The single global rule is scroll-behavior — harmless. */
+
+html {
+  scroll-behavior: smooth;
+}
+
+.promora-landing {
+  /* ─── Color Palette ────────────────────────────────────── */
+  --ink:           #0A0A0B;
+  --surface-1:     #111114;
+  --surface-2:     #18181D;
+  --pm-border:     rgba(255, 255, 255, 0.07);
+  --pm-border-active: rgba(255, 255, 255, 0.18);
+  --text-primary:  #F0EEE8;
+  --text-secondary:#8A8880;
+  --text-muted:    #4A4845;
+  --signal:        #E8C87A;
+  --signal-dim:    rgba(232, 200, 122, 0.12);
+  --accent-cool:   #3A6B8A;
+
+  /* ─── Spacing Unit ─────────────────────────────────────── */
+  --unit:          8px;
+
+  /* ─── Font Size Scale ──────────────────────────────────── */
+  --fs-96: 96px;
+  --fs-64: 64px;
+  --fs-48: 48px;
+  --fs-32: 32px;
+  --fs-22: 22px;
+  --fs-16: 16px;
+  --fs-13: 13px;
+
+  /* ─── Horizontal Margins (tension grid) ───────────────── */
+  --margin-h: 10vw;
+
+  /* ─── Line Heights ─────────────────────────────────────── */
+  --lh-display: 1.08;
+  --lh-body:    1.6;
+}
+
+@media (max-width: 768px) {
+  .promora-landing {
+    --margin-h: 6vw;
+  }
+}
+
+@media (max-width: 480px) {
+  .promora-landing {
+    --margin-h: 24px;
+  }
+}

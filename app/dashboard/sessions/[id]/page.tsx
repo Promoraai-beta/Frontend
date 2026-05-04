@@ -88,7 +88,7 @@ export default function SessionDetailPage() {
   useEffect(() => {
     if (activeTab !== 'recordings' || videoChunks.length === 0) return;
 
-    const initializeVideoPlayer = async (chunks: any[], videoRef: React.RefObject<HTMLVideoElement>, streamType: string) => {
+    const initializeVideoPlayer = async (chunks: any[], videoRef: React.RefObject<HTMLVideoElement | null>, streamType: string) => {
       // Wait for video element to be available
       await new Promise(resolve => setTimeout(resolve, 100));
       

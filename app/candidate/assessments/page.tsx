@@ -246,7 +246,7 @@ export default function MyAssessmentsPage() {
             onClick={() => {
               if (!user) {
                 // Redirect to login if not authenticated
-                window.location.href = "/login"
+                window.location.href = "/auth"
                 return
               }
               setCreateModalOpen(true)

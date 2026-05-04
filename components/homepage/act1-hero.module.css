@@ -1,0 +1,150 @@
+/* Act 1 — The Inciting Tension
+   100vh. Pure near-black. Left-rail text. Maximum negative space.
+
+   Animation timeline (absolute times from page load):
+     0ms    → page opacity 0 → 1 (instant, handled by .hero)
+     200ms  → line1 blurs in (800ms, ease-out)
+     1400ms → line2 blurs in (800ms, ease-out)
+     2600ms → caret + skip-link appear (400ms), caret then pulses forever  */
+
+/* ─── Keyframes ────────────────────────────────────────────────────────── */
+
+@keyframes blur-in {
+  from {
+    filter: blur(8px);
+    opacity: 0;
+  }
+  to {
+    filter: blur(0px);
+    opacity: 1;
+  }
+}
+
+/* Caret: fades to 0.4 opacity */
+@keyframes caret-appear {
+  from { opacity: 0; }
+  to   { opacity: 0.4; }
+}
+
+/* Caret: pulses between 0.4 and 0.15 — runs after caret-appear finishes */
+@keyframes caret-pulse {
+  0%, 100% { opacity: 0.4; }
+  50%       { opacity: 0.15; }
+}
+
+/* Skip link: fades to 0.6 opacity */
+@keyframes skip-appear {
+  from { opacity: 0; }
+  to   { opacity: 0.6; }
+}
+
+/* ─── Hero Section ─────────────────────────────────────────────────────── */
+
+.hero {
+  height: 100svh;
+  min-height: 600px;
+  background-color: var(--ink);
+  /* Left-rail alignment per tension grid */
+  padding-left: var(--margin-h);
+  padding-right: var(--margin-h);
+  /* Vertically center the headline block */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  position: relative;
+  /* No decorative elements, no gradient, pure black negative space */
+}
+
+/* ─── Headline Lines ───────────────────────────────────────────────────── */
+
+/* Shared styles for both headline lines */
+.line {
+  display: block;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 400;
+  /* opsz 144 = maximum optical size axis — widest ink traps, most character */
+  font-variation-settings: "opsz" 144;
+  font-size: var(--fs-96);
+  line-height: var(--lh-display);
+  color: var(--text-primary);
+  margin: 0;
+  padding: 0;
+}
+
+/* Line 1 — enters at 200ms */
+.line1 {
+  animation: blur-in 800ms ease-out 200ms both;
+}
+
+/* Line 2 — enters at 1400ms, tight margin from line 1 */
+.line2 {
+  margin-top: 4px;
+  animation: blur-in 800ms ease-out 1400ms both;
+}
+
+/* ─── Clarity Line (STATIC — present on load, zero animation) ──────────── */
+
+.clarity {
+  /* Intentionally NOT animated. Present immediately.
+     A user who reads nothing else reads this line. */
+  font-family: var(--font-ui);
+  font-size: 18px;
+  font-weight: 400;
+  line-height: var(--lh-body);
+  color: var(--text-secondary);
+  margin-top: 40px;
+  max-width: 560px;
+}
+
+/* ─── Bottom affordance — caret + skip link ────────────────────────────── */
+
+.bottom {
+  position: absolute;
+  bottom: 32px;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Scroll caret:
+   Two-animation chain — appear at 2600ms, then pulse forever.
+   The second animation (caret-pulse) is listed after caret-appear and thus
+   takes precedence once both are in effect after 3000ms. */
+.caret {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  animation:
+    caret-appear 400ms ease-out 2600ms both,
+    caret-pulse  2s   ease-in-out 3000ms infinite;
+}
+
+/* Skip anchor — simple opacity fade, no blur, no transform */
+.skipLink {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-primary);
+  text-decoration: none;
+  cursor: pointer;
+  animation: skip-appear 400ms ease-out 2600ms both;
+  /* No hover color change per spec */
+}
+
+/* ─── Mobile ────────────────────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .line {
+    font-size: clamp(32px, 9vw, 52px);
+    font-variation-settings: "opsz" 72;
+  }
+
+  .clarity {
+    font-size: 16px;
+  }
+}

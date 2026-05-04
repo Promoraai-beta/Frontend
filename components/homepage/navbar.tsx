@@ -98,7 +98,7 @@ export function Navbar() {
             <div className="hidden items-center gap-2 md:flex">
               <ThemeToggle variant="ghost" size="icon" className="shrink-0" />
               <Button asChild variant="ghost" size="sm" className="gap-2 text-foreground hover:bg-muted hover:text-foreground">
-                <Link href="/login">
+                <Link href="/auth">
                   <LogIn className="h-4 w-4" />
                   Login
                 </Link>
@@ -166,7 +166,7 @@ export function Navbar() {
               <div className="flex gap-2 pt-4">
                 <ThemeToggle variant="ghost" size="icon" className="shrink-0" />
                 <Button asChild variant="ghost" size="sm" className="gap-2">
-                  <Link href="/login">
+                  <Link href="/auth">
                     <LogIn className="h-4 w-4" />
                     Login
                   </Link>

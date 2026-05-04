@@ -2,29 +2,22 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { ProtectedRoute } from "@/components/protected-route"
-import { RecruiterNavbar } from "@/components/dashboard/recruiter-navbar"
-import { AnimatedBackground } from "@/components/animated-background"
 import { api } from "@/lib/api"
 import { motion, AnimatePresence } from "framer-motion"
-import { Monitor, Video, VideoOff, MonitorOff, Clock, RefreshCw, Eye, Wifi, WifiOff } from "lucide-react"
+import { Monitor, Video, Clock, RefreshCw, Eye, Wifi, WifiOff } from "lucide-react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
-
-function AvatarInitials({ name }: { name: string }) {
-  const parts = name.trim().split(" ")
-  const initials = parts.length >= 2 ? `${parts[0][0]}${parts[parts.length - 1][0]}` : name.slice(0, 2)
-  return (
-    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-violet-600 to-indigo-700 text-sm font-bold text-white flex-shrink-0">
-      {initials.toUpperCase()}
-    </div>
-  )
-}
+import { DashboardEditorialShell } from "@/components/dashboard/editorial/dashboard-editorial-shell"
+import { DashboardPageHeader } from "@/components/dashboard/editorial/dashboard-page-header"
+import { EditorialAvatarInitials } from "@/components/dashboard/editorial/editorial-avatar"
 
 function ElapsedTimer({ startedAt }: { startedAt: string | null }) {
   const [elapsed, setElapsed] = useState("")
 
   useEffect(() => {
-    if (!startedAt) { setElapsed("—"); return }
+    if (!startedAt) {
+      setElapsed("—")
+      return
+    }
     const tick = () => {
       const diff = Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000)
       const h = Math.floor(diff / 3600)
@@ -41,7 +34,6 @@ function ElapsedTimer({ startedAt }: { startedAt: string | null }) {
 }
 
 export default function LivePage() {
-  const router = useRouter()
   const [sessions, setSessions] = useState<any[]>([])
   const [assessments, setAssessments] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -50,8 +42,8 @@ export default function LivePage() {
   const load = useCallback(async () => {
     try {
       const [sessRes, assRes] = await Promise.all([
-        api.get("/api/sessions").then(r => r.json()).then(d => d.success ? d.data || [] : []).catch(() => []),
-        api.get("/api/assessments").then(r => r.json()).then(d => d.success ? d.data || [] : []).catch(() => []),
+        api.get("/api/sessions").then((r) => r.json()).then((d) => (d.success ? d.data || [] : [])).catch(() => []),
+        api.get("/api/assessments").then((r) => r.json()).then((d) => (d.success ? d.data || [] : [])).catch(() => []),
       ])
       setSessions(sessRes.filter((s: any) => s.status === "active"))
       setAssessments(assRes)
@@ -63,141 +55,160 @@ export default function LivePage() {
 
   useEffect(() => {
     load()
-    const id = setInterval(load, 15000) // auto-refresh every 15s
+    const id = setInterval(load, 15000)
     return () => clearInterval(id)
   }, [load])
 
-  const assessmentMap = Object.fromEntries(assessments.map(a => [a.id, a.jobTitle || a.role || "Assessment"]))
+  const assessmentMap = Object.fromEntries(assessments.map((a) => [a.id, a.jobTitle || a.role || "Assessment"]))
 
   return (
     <ProtectedRoute requiredRole="recruiter">
-      <div className="relative min-h-screen bg-background">
-        <AnimatedBackground />
-        <RecruiterNavbar />
+      <DashboardEditorialShell>
+        <DashboardPageHeader
+          eyebrow="Monitoring"
+          title="Live"
+          italic="sessions."
+          description={
+            <>
+              Candidates currently in assessments · refreshes every 15s
+              <span className="mt-2 block font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground/90">
+                Last update ·{" "}
+                {lastRefresh.toLocaleTimeString("en-US", {
+                  hour: "numeric",
+                  minute: "2-digit",
+                  second: "2-digit",
+                })}
+              </span>
+            </>
+          }
+          actions={
+            <button
+              type="button"
+              onClick={() => {
+                setLoading(true)
+                load()
+              }}
+              className="inline-flex items-center gap-2 rounded-full border border-hairline bg-muted/20 px-4 py-2 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground transition-colors hover:border-accent/35 hover:text-foreground"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
+          }
+        />
 
-        <div className="container mx-auto px-4 pt-20 pb-12 md:px-6 md:pt-24 lg:px-8 lg:pt-28 max-w-7xl">
-          <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}
-            className="space-y-6">
+        {!loading && sessions.length > 0 && (
+          <p className="-mt-4 font-mono text-[11px] uppercase tracking-[0.14em] text-accent">
+            <span className="mr-2 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500 align-middle dark:bg-emerald-400" />
+            {sessions.length} active now
+          </p>
+        )}
 
-            {/* Header */}
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-3">
-                  <h1 className="text-3xl font-bold text-white">Live Sessions</h1>
-                  {!loading && sessions.length > 0 && (
-                    <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 text-xs font-semibold text-emerald-400">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse inline-block" />
-                      {sessions.length} live
-                    </span>
-                  )}
-                </div>
-                <p className="mt-1 text-sm text-zinc-500">
-                  Candidates currently taking assessments · auto-refreshes every 15s
-                </p>
-              </div>
-              <button onClick={() => { setLoading(true); load() }}
-                className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-sm text-zinc-400 hover:text-white hover:border-zinc-600 transition-colors">
-                <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-                Refresh
-              </button>
-            </div>
-
-            {/* Last refresh */}
-            <p className="text-[11px] text-zinc-600">
-              Last updated: {lastRefresh.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" })}
+        {loading ? (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="h-52 animate-pulse rounded-2xl border border-hairline bg-muted/25" />
+            ))}
+          </div>
+        ) : sessions.length === 0 ? (
+          <div className="rounded-3xl border border-hairline bg-card px-6 py-24 text-center shadow-[inset_0_1px_0_0_hsl(var(--foreground)/0.04)]">
+            <WifiOff className="mx-auto mb-4 h-10 w-10 text-muted-foreground/50" />
+            <p className="font-serif text-xl text-foreground">No active sessions</p>
+            <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+              When a candidate starts an assessment, they will appear here automatically.
             </p>
+          </div>
+        ) : (
+          <AnimatePresence>
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {sessions.map((session, i) => {
+                const position = assessmentMap[session.assessmentId] || "Assessment"
+                const hasWebcam = true
+                const hasScreenshare = true
 
-            {/* Cards grid */}
-            {loading ? (
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <div key={i} className="h-52 animate-pulse rounded-xl bg-zinc-900/60 border border-zinc-800/60" />
-                ))}
-              </div>
-            ) : sessions.length === 0 ? (
-              <div className="rounded-xl border border-zinc-800/60 bg-zinc-950/60 py-24 text-center">
-                <WifiOff className="h-10 w-10 text-zinc-700 mx-auto mb-4" />
-                <p className="text-zinc-400 font-medium">No active sessions right now</p>
-                <p className="text-zinc-600 text-sm mt-1">This page auto-refreshes when candidates start their assessment</p>
-              </div>
-            ) : (
-              <AnimatePresence>
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {sessions.map((session, i) => {
-                    const position = assessmentMap[session.assessmentId] || "Assessment"
-                    const hasWebcam     = true  // assume live streams available when session is active
-                    const hasScreenshare = true
+                return (
+                  <motion.article
+                    key={session.id}
+                    layout
+                    initial={{ opacity: 0, y: 14 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.98 }}
+                    transition={{ delay: i * 0.04, duration: 0.35 }}
+                    className="group relative overflow-hidden rounded-2xl border border-hairline bg-card shadow-[0_20px_60px_-40px_hsl(var(--accent)/0.25)] transition-colors hover:border-accent/25"
+                  >
+                    <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/60 to-transparent" />
 
-                    return (
-                      <motion.div key={session.id}
-                        initial={{ opacity: 0, y: 16 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, scale: 0.95 }}
-                        transition={{ delay: i * 0.05 }}
-                        className="group relative rounded-xl border border-zinc-800/70 bg-zinc-950/60 backdrop-blur-sm hover:border-zinc-700 hover:bg-zinc-900/60 transition-all overflow-hidden"
-                      >
-                        {/* Live pulse strip */}
-                        <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-emerald-500/0 via-emerald-500 to-emerald-500/0" />
+                    <div className="relative flex h-36 items-center justify-center overflow-hidden border-b border-hairline bg-muted/20">
+                      <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-accent/[0.06] to-transparent" />
+                      <div className="relative flex flex-col items-center gap-2 text-muted-foreground">
+                        <Monitor className="h-8 w-8 opacity-60" />
+                        <span className="font-mono text-[10px] uppercase tracking-[0.16em]">Preview</span>
+                      </div>
 
-                        {/* Screen preview placeholder */}
-                        <div className="relative h-36 bg-zinc-900/80 border-b border-zinc-800/60 flex items-center justify-center overflow-hidden">
-                          <div className="absolute inset-0 bg-gradient-to-br from-zinc-900 to-zinc-950" />
-                          <div className="relative flex flex-col items-center gap-2 text-zinc-600">
-                            <Monitor className="h-8 w-8" />
-                            <span className="text-xs">Screen preview</span>
-                          </div>
-                          {/* Stream indicators top-right */}
-                          <div className="absolute top-2 right-2 flex gap-1.5">
-                            <div className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${hasWebcam ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" : "bg-zinc-800 text-zinc-600"}`}>
-                              <Video className="h-3 w-3" />CAM
-                            </div>
-                            <div className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${hasScreenshare ? "bg-blue-500/20 text-blue-400 border border-blue-500/30" : "bg-zinc-800 text-zinc-600"}`}>
-                              <Monitor className="h-3 w-3" />SCREEN
-                            </div>
-                          </div>
-                          {/* Live badge top-left */}
-                          <div className="absolute top-2 left-2 flex items-center gap-1 rounded-md bg-red-500/20 border border-red-500/30 px-1.5 py-0.5">
-                            <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse inline-block" />
-                            <span className="text-[10px] font-semibold text-red-400">LIVE</span>
-                          </div>
-                          {/* Elapsed timer bottom-left */}
-                          <div className="absolute bottom-2 left-2 text-[10px] text-zinc-500 font-mono flex items-center gap-1">
-                            <Clock className="h-3 w-3" />
-                            <ElapsedTimer startedAt={session.startedAt || session.started_at} />
-                          </div>
+                      <div className="absolute right-2 top-2 flex gap-1.5">
+                        <div
+                          className={`flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide ${
+                            hasWebcam
+                              ? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                              : "border border-hairline bg-muted text-muted-foreground"
+                          }`}
+                        >
+                          <Video className="h-3 w-3" />
+                          Cam
                         </div>
-
-                        {/* Candidate info */}
-                        <div className="p-4 space-y-3">
-                          <div className="flex items-center gap-3">
-                            <AvatarInitials name={session.candidateName || "?"} />
-                            <div className="min-w-0">
-                              <p className="text-sm font-semibold text-white truncate">{session.candidateName || "Unknown"}</p>
-                              <p className="text-xs text-zinc-500 truncate">{session.candidateEmail || ""}</p>
-                            </div>
-                            <div className="ml-auto flex items-center gap-1 text-[10px] text-emerald-400 flex-shrink-0">
-                              <Wifi className="h-3 w-3" />
-                              <span className="font-medium">Online</span>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs text-zinc-500 truncate">{position}</span>
-                            <Link href={`/dashboard/live/${session.id}`}
-                              className="flex items-center gap-1.5 rounded-lg bg-white text-black hover:bg-zinc-200 transition-colors px-3 py-1.5 text-xs font-semibold">
-                              <Eye className="h-3.5 w-3.5" />Monitor
-                            </Link>
-                          </div>
+                        <div
+                          className={`flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide ${
+                            hasScreenshare
+                              ? "border border-accent/35 bg-accent/10 text-accent-deep dark:text-accent-glow"
+                              : "border border-hairline bg-muted text-muted-foreground"
+                          }`}
+                        >
+                          <Monitor className="h-3 w-3" />
+                          Screen
                         </div>
-                      </motion.div>
-                    )
-                  })}
-                </div>
-              </AnimatePresence>
-            )}
-          </motion.div>
-        </div>
-      </div>
+                      </div>
+
+                      <div className="absolute left-2 top-2 flex items-center gap-1 rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide text-red-600 dark:text-red-400">
+                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
+                        Live
+                      </div>
+
+                      <div className="absolute bottom-2 left-2 flex items-center gap-1 font-mono text-[10px] tabular-nums text-muted-foreground">
+                        <Clock className="h-3 w-3" />
+                        <ElapsedTimer startedAt={session.startedAt || session.started_at} />
+                      </div>
+                    </div>
+
+                    <div className="space-y-4 p-4">
+                      <div className="flex items-center gap-3">
+                        <EditorialAvatarInitials name={session.candidateName || "?"} />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-serif text-base text-foreground">{session.candidateName || "Unknown"}</p>
+                          <p className="truncate font-mono text-xs text-muted-foreground">{session.candidateEmail || ""}</p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-600 dark:text-emerald-400">
+                          <Wifi className="h-3 w-3" />
+                          Online
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-3 border-t border-hairline pt-4">
+                        <span className="truncate text-sm text-muted-foreground">{position}</span>
+                        <Link
+                          href={`/dashboard/live/${session.id}`}
+                          className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-accent px-4 py-2 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-accent-foreground shadow-[0_10px_28px_-12px_hsl(var(--accent)/0.55)] transition-colors hover:bg-accent-deep"
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                          Monitor
+                        </Link>
+                      </div>
+                    </div>
+                  </motion.article>
+                )
+              })}
+            </div>
+          </AnimatePresence>
+        )}
+      </DashboardEditorialShell>
     </ProtectedRoute>
   )
 }

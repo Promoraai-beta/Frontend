@@ -61,46 +61,46 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'production') {
 
     try {
       Object.defineProperty(console, 'log', {
-        value: function() {
-          if (!suppress(arguments)) origLog.apply(console, arguments);
+        value: function (...args: unknown[]) {
+          if (!suppress(args)) origLog(...args)
         },
         writable: true,
         configurable: true
       });
       Object.defineProperty(console, 'warn', {
-        value: function() {
-          if (!suppress(arguments)) origWarn.apply(console, arguments);
+        value: function (...args: unknown[]) {
+          if (!suppress(args)) origWarn(...args)
         },
         writable: true,
         configurable: true
       });
       Object.defineProperty(console, 'info', {
-        value: function() {
-          if (!suppress(arguments)) origInfo.apply(console, arguments);
+        value: function (...args: unknown[]) {
+          if (!suppress(args)) origInfo(...args)
         },
         writable: true,
         configurable: true
       });
       Object.defineProperty(console, 'debug', {
-        value: function() {
-          if (!suppress(arguments)) origDebug.apply(console, arguments);
+        value: function (...args: unknown[]) {
+          if (!suppress(args)) origDebug(...args)
         },
         writable: true,
         configurable: true
       });
     } catch {
       // Fallback if Object.defineProperty fails
-      console.log = function() {
-        if (!suppress(arguments)) origLog.apply(console, arguments);
+      console.log = function (...args: unknown[]) {
+        if (!suppress(args)) origLog(...args)
       };
-      console.warn = function() {
-        if (!suppress(arguments)) origWarn.apply(console, arguments);
+      console.warn = function (...args: unknown[]) {
+        if (!suppress(args)) origWarn(...args)
       };
-      console.info = function() {
-        if (!suppress(arguments)) origInfo.apply(console, arguments);
+      console.info = function (...args: unknown[]) {
+        if (!suppress(args)) origInfo(...args)
       };
-      console.debug = function() {
-        if (!suppress(arguments)) origDebug.apply(console, arguments);
+      console.debug = function (...args: unknown[]) {
+        if (!suppress(args)) origDebug(...args)
       };
     }
   };

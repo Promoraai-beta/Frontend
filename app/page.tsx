@@ -1,44 +1,31 @@
-import { Navbar } from "@/components/homepage/navbar"
-import { HeroSection } from "@/components/homepage/hero-section"
-import { PromptIQSection } from "@/components/homepage/promptiq-section"
-import { BetSection } from "@/components/homepage/bet-section"
-import { ProblemSolutionSection } from "@/components/homepage/problem-solution-section"
-import { AboutSection } from "@/components/homepage/about-section"
-import { ComparisonSection } from "@/components/homepage/comparison-section"
-import { HowItWorksSection } from "@/components/homepage/how-it-works-section"
-import { VisionSection } from "@/components/homepage/vision-section"
-import { FaqSection } from "@/components/homepage/faq-section"
-import { CtaSection } from "@/components/homepage/cta-section"
-// import { TestimonialsSection } from "@/components/homepage/testimonials-section" // Hidden for now - testimonials are not real yet
-// import { ContactSection } from "@/components/homepage/contact-section" // Hidden for now - contact form not active yet
-// import { BlogSection } from "@/components/homepage/blog-section" // Hidden for future use
-import { Footer } from "@/components/homepage/footer"
-import { BackgroundLines } from "@/components/ui/background-lines"
+import { Nav } from "@/components/landing/nav"
+import { Hero } from "@/components/landing/hero"
+import { Problem } from "@/components/landing/problem"
+import { Stats } from "@/components/landing/stats"
+import { HowItWorks } from "@/components/landing/how-it-works"
+import { PromptIQScore } from "@/components/landing/promptiq-score"
+import { WhatYouSee } from "@/components/landing/what-you-see"
+import { Compare } from "@/components/landing/compare"
+import { Pricing } from "@/components/landing/pricing"
+import { FAQ } from "@/components/landing/faq"
+import { ClosingCTA } from "@/components/landing/closing-cta"
+import { LandingFooter } from "@/components/landing/landing-footer"
 
 export default function HomePage() {
   return (
-    <main className="min-h-screen bg-background relative">
-      {/* Base: subtle dot pattern (Bujo/Tsenta style) - theme-aware */}
-      <div className="fixed inset-0 z-0 bg-[radial-gradient(rgba(0,0,0,0.08)_1px,transparent_1px)] dark:bg-[radial-gradient(rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:32px_32px]" />
-      <div className="pointer-events-none fixed inset-0 z-0">
-        <BackgroundLines className="h-full w-full" svgOptions={{ duration: 12 }} />
-      </div>
-
-      <div className="relative z-10">
-        <Navbar />
-        <HeroSection />
-        <PromptIQSection />
-        <BetSection />
-        <HowItWorksSection />
-        <ComparisonSection />
-        <VisionSection />
-        <FaqSection />
-        <CtaSection />
-        {/* <TestimonialsSection /> Hidden until we have real testimonials */}
-        {/* <ContactSection /> Hidden until contact form is live */}
-        {/* <BlogSection /> Hidden for future use */}
-        <Footer />
-      </div>
+    <main className="min-h-screen bg-background">
+      <Nav />
+      <Hero />
+      <Problem />
+      <Stats />
+      <HowItWorks />
+      <PromptIQScore />
+      <WhatYouSee />
+      <Compare />
+      <Pricing />
+      <FAQ />
+      <ClosingCTA />
+      <LandingFooter />
     </main>
   )
 }

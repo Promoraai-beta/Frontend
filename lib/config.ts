@@ -19,15 +19,8 @@ export const API_ENDPOINTS = {
 // Admin/Support email for contact links
 export const ADMIN_EMAIL = process.env.NEXT_PUBLIC_ADMIN_EMAIL || 'admin@promora.ai';
 
-// StackBlitz WebContainer — PAUSED (using local Docker / Azure Container instead)
-// export const STACKBLITZ_WEBCONTAINER_API_KEY = process.env.NEXT_PUBLIC_STACKBLITZ_API_KEY;
-// if (!STACKBLITZ_WEBCONTAINER_API_KEY && process.env.NODE_ENV !== 'development') {
-//   console.warn('⚠️ WARNING: NEXT_PUBLIC_STACKBLITZ_API_KEY is not set. WebContainer may not work properly in production.');
-// }
-// export const STACKBLITZ_CONFIG = {
-//   apiKey: STACKBLITZ_WEBCONTAINER_API_KEY,
-//   bootOptions: {}
-// };
+// StackBlitz WebContainer — optional when StackBlitz IDE is enabled
+export const STACKBLITZ_WEBCONTAINER_API_KEY = process.env.NEXT_PUBLIC_STACKBLITZ_API_KEY ?? "";
 
 // Azure Container IDE feature flag
 // Set NEXT_PUBLIC_USE_AZURE_CONTAINER=true to use Azure containers instead of WebContainer

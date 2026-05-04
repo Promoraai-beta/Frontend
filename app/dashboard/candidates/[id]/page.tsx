@@ -8,6 +8,7 @@ import { publicCandidates } from "@/lib/profile-mock-data"
 import { RecruiterNavbar } from "@/components/dashboard/recruiter-navbar"
 import { ProtectedRoute } from "@/components/protected-route"
 import { AnimatedBackground } from "@/components/animated-background"
+import { RECRUITER_DASH_MAIN_INNER } from "@/components/dashboard/editorial/dashboard-editorial-shell"
 import { InviteCandidateModal } from "@/components/dashboard/invite-candidate-modal"
 import { GenerateAssessmentForCandidateModal } from "@/components/dashboard/generate-assessment-for-candidate-modal"
 import { Button } from "@/components/ui/button"
@@ -34,7 +35,8 @@ export default function CandidateDetailPage() {
         <div className="relative min-h-screen bg-black">
           <AnimatedBackground />
           <RecruiterNavbar />
-          <main className="container mx-auto px-4 py-8 pt-20 md:pt-24 lg:pt-28">
+          <main className="relative z-[1] w-full px-4 py-8 pt-20 md:pt-24 lg:pt-28">
+            <div className={RECRUITER_DASH_MAIN_INNER}>
             <div className="text-center py-16">
               <p className="text-xl text-zinc-400 mb-4">Candidate not found</p>
               <Button
@@ -46,6 +48,7 @@ export default function CandidateDetailPage() {
                 Back to Candidates
               </Button>
             </div>
+          </div>
           </main>
         </div>
       </ProtectedRoute>
@@ -60,7 +63,8 @@ export default function CandidateDetailPage() {
         <RecruiterNavbar />
 
         {/* Main Content */}
-        <main className="container mx-auto px-4 py-8 pt-20 md:pt-24 lg:pt-28">
+        <main className="relative z-[1] w-full px-4 py-8 pt-20 md:pt-24 lg:pt-28">
+          <div className={RECRUITER_DASH_MAIN_INNER}>
           {/* Back Button */}
           <motion.div
             initial={{ opacity: 0, y: -20 }}
@@ -253,6 +257,7 @@ export default function CandidateDetailPage() {
               ))}
             </div>
           </motion.div>
+        </div>
         </main>
 
         {/* Invite Candidate Modal */}

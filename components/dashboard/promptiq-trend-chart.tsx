@@ -1,7 +1,7 @@
 "use client"
 
 import { Card } from "@/components/ui/card"
-import { Brain, TrendingUp } from "lucide-react"
+import { Brain, TrendingDown, TrendingUp } from "lucide-react"
 import {
   Area,
   AreaChart,
@@ -59,11 +59,11 @@ function computeWeeklyPromptIQ(interactions: any[]) {
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length && payload[0].value != null) {
     return (
-      <div className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm shadow-xl">
-        <p className="text-zinc-400">{label}</p>
-        <p className="font-bold text-white">
+      <div className="rounded-xl border border-hairline bg-card px-3 py-2 text-sm shadow-xl backdrop-blur-sm">
+        <p className="text-muted-foreground">{label}</p>
+        <p className="font-medium text-foreground">
           {payload[0].value}{" "}
-          <span className="font-normal text-zinc-400">PromptIQ</span>
+          <span className="font-normal text-muted-foreground">PromptIQ</span>
         </p>
       </div>
     )
@@ -82,28 +82,31 @@ export function PromptIQTrendChart({ aiInteractions }: Props) {
       : null
 
   return (
-    <Card className="border-zinc-800/60 bg-zinc-950/60 p-6 backdrop-blur-sm">
+    <Card className="rounded-2xl border-hairline bg-card p-6 shadow-[inset_0_1px_0_0_hsl(var(--foreground)/0.04)]">
       <div className="mb-5 flex items-center justify-between">
         <div>
           <div className="flex items-center gap-2">
-            <Brain className="h-4 w-4 text-zinc-300" />
-            <h3 className="text-base font-semibold text-white">PromptIQ Trend</h3>
+            <Brain className="h-4 w-4 text-accent" />
+            <h3 className="font-serif text-xl text-foreground">PromptIQ trend</h3>
           </div>
-          <p className="mt-0.5 text-xs text-zinc-500">
-            Avg candidate AI fluency score per week
-          </p>
+          <p className="mt-1 text-sm text-muted-foreground">Average AI fluency proxy per week</p>
         </div>
         {trend !== null ? (
-          <div className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium border ${
-            trend >= 0
-              ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
-              : "bg-red-500/10 border-red-500/20 text-red-400"
-          }`}>
-            <TrendingUp className="h-3 w-3" />
-            <span>{trend >= 0 ? "+" : ""}{trend}%</span>
+          <div
+            className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[11px] font-semibold uppercase tracking-wide ${
+              trend >= 0
+                ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                : "border-red-500/25 bg-red-500/10 text-red-700 dark:text-red-400"
+            }`}
+          >
+            {trend >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+            <span>
+              {trend >= 0 ? "+" : ""}
+              {trend}%
+            </span>
           </div>
         ) : (
-          <span className="text-xs text-zinc-600">No data yet</span>
+          <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">No data yet</span>
         )}
       </div>
 
@@ -111,32 +114,44 @@ export function PromptIQTrendChart({ aiInteractions }: Props) {
         <AreaChart data={data} margin={{ top: 8, right: 8, left: -24, bottom: 0 }}>
           <defs>
             <linearGradient id="promptiqGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#a855f7" stopOpacity={0.3} />
-              <stop offset="100%" stopColor="#a855f7" stopOpacity={0} />
+              <stop offset="0%" stopColor="hsl(var(--accent))" stopOpacity={0.35} />
+              <stop offset="100%" stopColor="hsl(var(--accent))" stopOpacity={0} />
             </linearGradient>
           </defs>
-          <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
-          <XAxis dataKey="label" stroke="#52525b" fontSize={11} tickLine={false} axisLine={false} />
-          <YAxis stroke="#52525b" fontSize={11} tickLine={false} axisLine={false} domain={[0, 100]} />
+          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--hairline))" vertical={false} />
+          <XAxis
+            dataKey="label"
+            stroke="hsl(var(--muted-foreground))"
+            fontSize={11}
+            tickLine={false}
+            axisLine={false}
+          />
+          <YAxis
+            stroke="hsl(var(--muted-foreground))"
+            fontSize={11}
+            tickLine={false}
+            axisLine={false}
+            domain={[0, 100]}
+          />
           <Tooltip content={<CustomTooltip />} />
           <Area
             type="monotone"
             dataKey="score"
-            stroke="#a855f7"
+            stroke="hsl(var(--accent))"
             strokeWidth={2}
             fill="url(#promptiqGrad)"
             dot={false}
             connectNulls
-            activeDot={{ r: 4, fill: "#a855f7", strokeWidth: 0 }}
+            activeDot={{ r: 4, fill: "hsl(var(--accent))", strokeWidth: 0 }}
           />
           {lastScored?.score && (
             <ReferenceDot
               x={lastScored.label}
               y={lastScored.score}
               r={5}
-              fill="#a855f7"
-              stroke="#a855f7"
-              strokeWidth={0}
+              fill="hsl(var(--accent))"
+              stroke="hsl(var(--accent-glow))"
+              strokeWidth={2}
             />
           )}
         </AreaChart>

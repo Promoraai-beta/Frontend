@@ -33,7 +33,8 @@ export function SignupPromptModal({
     const params = new URLSearchParams()
     if (sessionId) params.set('sessionId', sessionId)
     if (candidateEmail) params.set('email', candidateEmail)
-    router.push(`/register?${params.toString()}`)
+    params.set("tab", "signup")
+    router.push(`/auth?${params.toString()}`)
   }
 
   const handleSkip = () => {
@@ -106,7 +107,7 @@ export function SignupPromptModal({
                 const params = new URLSearchParams()
                 if (sessionId) params.set('sessionId', sessionId)
                 if (candidateEmail) params.set('email', candidateEmail)
-                router.push(`/login?${params.toString()}`)
+                router.push(`/auth?${params.toString()}`)
               }}
               className="text-emerald-400 hover:text-emerald-300 underline"
             >

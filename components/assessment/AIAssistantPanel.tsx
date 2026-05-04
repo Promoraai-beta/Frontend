@@ -12,6 +12,7 @@ const A = {
   ink:       '#E2E4ED',          // primary text
   ink2:      'rgba(226,228,237,0.6)',   // secondary text
   ink3:      'rgba(226,228,237,0.32)',  // muted / hints
+  ink4:      'rgba(226,228,237,0.18)',  // extra-muted / disabled labels
   rule:      'rgba(255,255,255,0.07)',  // soft border
   ruleStr:   'rgba(255,255,255,0.11)', // stronger border
   accent:    '#6C63FF',          // purple accent
@@ -493,7 +494,7 @@ function ModelPicker({ current, onPick, onClose, availableProviders }: {
         <div key={g.id}>
           <div style={{ padding: '8px 14px 4px', display: 'flex', alignItems: 'center', gap: 7 }}>
             <ProviderGlyph provider={g.id} size={11} />
-            <span style={{ fontSize: 9.5, color: g.available ? A.ink3 : A.ink4 ?? A.ink3, letterSpacing: '0.18em', textTransform: 'uppercase' as const }}>{g.label}</span>
+            <span style={{ fontSize: 9.5, color: g.available ? A.ink3 : A.ink4, letterSpacing: '0.18em', textTransform: 'uppercase' as const }}>{g.label}</span>
             {!g.available && (
               <span style={{ fontSize: 8.5, color: '#ef4444', letterSpacing: '0.1em', fontFamily: '"JetBrains Mono", monospace' }}>NO KEY</span>
             )}

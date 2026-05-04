@@ -22,7 +22,7 @@ const links = {
   Company: [
     { label: "Vision", href: "#vision" },
     { label: "Book a demo", href: "https://calendly.com/promoraai05/30min" },
-    { label: "Login", href: "/login" },
+    { label: "Login", href: "/auth" },
   ],
 }
 

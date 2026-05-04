@@ -149,7 +149,7 @@ export default function InvitePage() {
               <p className="text-sm text-zinc-400">
                 This invitation link is invalid, expired, or has already been used.
               </p>
-              <Link href="/login">
+              <Link href="/auth">
                 <Button variant="outline" className="w-full">
                   Go to Login
                 </Button>
@@ -262,7 +262,7 @@ export default function InvitePage() {
           </form>
           <div className="mt-4 text-center text-sm text-zinc-400">
             Already have an account?{" "}
-            <Link href="/login" className="text-white hover:underline">
+            <Link href="/auth" className="text-white hover:underline">
               Sign in
             </Link>
           </div>

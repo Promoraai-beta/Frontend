@@ -1,26 +1,57 @@
 import type React from "react"
 import type { Metadata } from "next"
-import Script from "next/script"
-import { Geist, Geist_Mono, DM_Serif_Display } from "next/font/google"
+import { Inter, Fraunces, JetBrains_Mono, Space_Mono } from "next/font/google"
 import { AuthProvider } from "@/components/auth-provider"
 import { ThemeProvider } from "@/components/theme-provider"
 import { AnalyticsWrapper } from "@/components/analytics-wrapper"
 import { ConsoleFilter } from "@/components/console-filter"
-// Import console filter early to catch messages before React loads
 import "@/lib/console-filter-inline"
 import "./globals.css"
 
-const geist = Geist({ subsets: ["latin"] })
-const geistMono = Geist_Mono({ subsets: ["latin"] })
-const dmSerif = DM_Serif_Display({ weight: "400", subsets: ["latin"], variable: "--font-display" })
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+})
+
+const fraunces = Fraunces({
+  subsets: ["latin"],
+  weight: ["400", "500"],
+  style: ["normal", "italic"],
+  variable: "--font-fraunces",
+})
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500"],
+  variable: "--font-jetbrains",
+})
+
+const spaceMono = Space_Mono({
+  subsets: ["latin"],
+  weight: ["400", "700"],
+  variable: "--font-space-mono",
+})
 
 export const metadata: Metadata = {
-  title: "Promora AI - AI-powered assessment evaluating platform",
-  description: "Track candidate assessments with AI-powered compliance monitoring",
+  title: "Promora — Evaluate How Candidates work with AI",
+  description:
+    "See exactly how every candidate works with AI before you make a call. Promora measures AI collaboration — not just whether the code compiles.",
   icons: {
-    icon: "/icon.svg",
-    shortcut: "/icon.svg",
-    apple: "/icon.svg",
+    icon: "/Promora-Logo.svg",
+    shortcut: "/Promora-Logo.svg",
+    apple: "/Promora-Logo.svg",
+  },
+  openGraph: {
+    title: "Promora — Evaluate How Candidates work with AI",
+    description:
+      "See exactly how every candidate works with AI before you make a call.",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Promora — Evaluate How Candidates work with AI",
+    description:
+      "See exactly how every candidate works with AI before you make a call.",
   },
 }
 
@@ -30,12 +61,15 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning className={dmSerif.variable}>
-      <body className={`${geist.className} antialiased`}>
-        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`${inter.variable} ${fraunces.variable} ${jetbrainsMono.variable} ${spaceMono.variable}`}
+    >
+      <body className={`${inter.className} antialiased`}>
+        <ThemeProvider attribute="class" defaultTheme="light" enableSystem>
           <ConsoleFilter />
           <AuthProvider>{children}</AuthProvider>
-          {/* Analytics only loads on Vercel production deployments, not in local dev */}
           <AnalyticsWrapper />
         </ThemeProvider>
       </body>

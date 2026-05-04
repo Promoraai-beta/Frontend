@@ -1,39 +1,52 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { ProtectedRoute } from "@/components/protected-route"
-import { RecruiterNavbar } from "@/components/dashboard/recruiter-navbar"
-import { AnimatedBackground } from "@/components/animated-background"
 import { api } from "@/lib/api"
-import { motion } from "framer-motion"
-import { Search, X } from "lucide-react"
+import { Search, X, ArrowUpRight, ChevronLeft, ChevronRight } from "lucide-react"
 import Link from "next/link"
-import { Badge } from "@/components/ui/badge"
+import { cn } from "@/lib/utils"
+import { DashboardEditorialShell } from "@/components/dashboard/editorial/dashboard-editorial-shell"
+import { DashboardPageHeader } from "@/components/dashboard/editorial/dashboard-page-header"
+import { EditorialAvatarInitials } from "@/components/dashboard/editorial/editorial-avatar"
 
-function AvatarInitials({ name }: { name: string }) {
-  const parts = name.trim().split(" ")
-  const initials = parts.length >= 2 ? `${parts[0][0]}${parts[parts.length - 1][0]}` : name.slice(0, 2)
+const PAGE_SIZE = 10
+
+const STATUS_RANK: Record<string, number> = {
+  completed: 0,
+  "in-progress": 1,
+  "not-started": 2,
+}
+
+function StatusPill({ status }: { status: string }) {
+  if (status === "completed")
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-700 dark:border-emerald-500/30 dark:text-emerald-400">
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500 dark:bg-emerald-400" />
+        Completed
+      </span>
+    )
+  if (status === "in-progress")
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/25 bg-amber-500/10 px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-800 dark:border-amber-500/30 dark:text-amber-400">
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500 dark:bg-amber-400" />
+        In progress
+      </span>
+    )
   return (
-    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-violet-600 to-indigo-700 text-xs font-semibold text-white flex-shrink-0 shadow">
-      {initials.toUpperCase()}
-    </div>
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-hairline bg-muted/50 px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/70" />
+      Invited
+    </span>
   )
 }
 
-function StatusBadge({ status }: { status: string }) {
-  if (status === "completed")
-    return <Badge className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-medium gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400 inline-block" />Completed</Badge>
-  if (status === "in-progress")
-    return <Badge className="bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs font-medium gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-amber-400 inline-block" />In Progress</Badge>
-  return <Badge className="bg-zinc-700/60 text-zinc-400 border border-zinc-600/30 text-xs font-medium gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-zinc-500 inline-block" />Invited</Badge>
-}
-
-function PromptIQBar({ score }: { score: number }) {
+function PromptIQCell({ score }: { score: number }) {
   return (
-    <div className="flex items-center gap-2">
-      <span className="w-6 text-right text-sm font-semibold tabular-nums text-white">{score}</span>
-      <div className="w-20 h-1.5 rounded-full bg-zinc-800 overflow-hidden">
-        <div className="h-full rounded-full bg-zinc-400" style={{ width: `${score}%` }} />
+    <div className="flex w-full max-w-[9rem] items-center justify-end gap-2 lg:max-w-none lg:justify-start">
+      <span className="font-serif text-lg tabular-nums tracking-tight text-foreground md:text-xl">{score}</span>
+      <div className="hidden min-w-0 flex-1 h-1.5 overflow-hidden rounded-full bg-muted md:block">
+        <div className="h-full rounded-full bg-accent/70" style={{ width: `${score}%` }} />
       </div>
     </div>
   )
@@ -44,14 +57,14 @@ export default function CandidatesPage() {
   const [assessments, setAssessments] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
-  const [showSearch, setShowSearch] = useState(false)
+  const [page, setPage] = useState(1)
 
   useEffect(() => {
     async function load() {
       try {
         const [sessRes, assRes] = await Promise.all([
-          api.get("/api/sessions").then(r => r.json()).then(d => d.success ? d.data || [] : []).catch(() => []),
-          api.get("/api/assessments").then(r => r.json()).then(d => d.success ? d.data || [] : []).catch(() => []),
+          api.get("/api/sessions").then((r) => r.json()).then((d) => (d.success ? d.data || [] : [])).catch(() => []),
+          api.get("/api/assessments").then((r) => r.json()).then((d) => (d.success ? d.data || [] : [])).catch(() => []),
         ])
         setSessions(sessRes)
         setAssessments(assRes)
@@ -62,125 +75,269 @@ export default function CandidatesPage() {
     load()
   }, [])
 
-  const assessmentMap = Object.fromEntries(assessments.map(a => [a.id, a.jobTitle || a.role || "Untitled"]))
-
-  const candidates = sessions.map(s => ({
-    id: s.id,
-    name: s.candidateName || s.candidate_name || "Unknown",
-    email: s.candidateEmail || s.candidate_email || "",
-    position: assessmentMap[s.assessmentId] || "—",
-    assessmentId: s.assessmentId,
-    status: s.status === "pending" ? "not-started" : s.status === "active" ? "in-progress" : "completed",
-    score: s.score,
-  }))
-
-  const filtered = candidates.filter(c =>
-    !search ||
-    c.name.toLowerCase().includes(search.toLowerCase()) ||
-    c.email.toLowerCase().includes(search.toLowerCase()) ||
-    c.position.toLowerCase().includes(search.toLowerCase())
+  const assessmentMap = useMemo(
+    () => Object.fromEntries(assessments.map((a) => [a.id, a.jobTitle || a.role || "Untitled"])),
+    [assessments]
   )
 
-  const total      = filtered.length
-  const completed  = filtered.filter(c => c.status === "completed").length
-  const inProgress = filtered.filter(c => c.status === "in-progress").length
+  const candidates = useMemo(
+    () =>
+      sessions.map((s) => ({
+        id: s.id,
+        name: s.candidateName || s.candidate_name || "Unknown",
+        email: s.candidateEmail || s.candidate_email || "",
+        position: assessmentMap[s.assessmentId] || "—",
+        assessmentId: s.assessmentId,
+        status: s.status === "pending" ? "not-started" : s.status === "active" ? "in-progress" : "completed",
+        score: s.score,
+      })),
+    [sessions, assessmentMap]
+  )
+
+  const filtered = useMemo(
+    () =>
+      candidates.filter(
+        (c) =>
+          !search ||
+          c.name.toLowerCase().includes(search.toLowerCase()) ||
+          c.email.toLowerCase().includes(search.toLowerCase()) ||
+          c.position.toLowerCase().includes(search.toLowerCase())
+      ),
+    [candidates, search]
+  )
+
+  /** Completed first (View available), then in progress, then invited */
+  const sortedFiltered = useMemo(() => {
+    return [...filtered].sort((a, b) => {
+      const ra = STATUS_RANK[a.status] ?? 99
+      const rb = STATUS_RANK[b.status] ?? 99
+      if (ra !== rb) return ra - rb
+      if (a.status === "completed" && b.status === "completed") {
+        return (Number(b.score) || 0) - (Number(a.score) || 0)
+      }
+      return a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+    })
+  }, [filtered])
+
+  const total = sortedFiltered.length
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+
+  useEffect(() => {
+    setPage(1)
+  }, [search])
+
+  useEffect(() => {
+    setPage((p) => Math.min(Math.max(1, p), totalPages))
+  }, [totalPages])
+
+  const safePage = Math.min(Math.max(1, page), totalPages)
+  const startIdx = (safePage - 1) * PAGE_SIZE
+  const pageRows = sortedFiltered.slice(startIdx, startIdx + PAGE_SIZE)
+  const showingFrom = total === 0 ? 0 : startIdx + 1
+  const showingTo = startIdx + pageRows.length
+
+  const completed = sortedFiltered.filter((c) => c.status === "completed").length
+  const inProgress = sortedFiltered.filter((c) => c.status === "in-progress").length
+
+  /** lg: 12-column proportional grid — avoids empty gap between PromptIQ and Open */
+  const rowGrid =
+    "grid grid-cols-12 gap-y-3 lg:grid-cols-12 lg:gap-x-5 xl:gap-x-8 lg:gap-y-0 lg:items-center"
 
   return (
     <ProtectedRoute requiredRole="recruiter">
-      <div className="relative min-h-screen bg-background">
-        <AnimatedBackground />
-        <RecruiterNavbar />
+      <DashboardEditorialShell>
+        <DashboardPageHeader
+          eyebrow="Talent pool"
+          title="All"
+          italic="candidates."
+          actionsClassName="w-full basis-full sm:w-auto sm:basis-auto sm:justify-end"
+          description={
+            loading ? (
+              "Loading…"
+            ) : (
+              <>
+                {total} total · {completed} completed · {inProgress} in progress
+              </>
+            )
+          }
+          actions={
+            <div className="relative w-full min-w-0 sm:max-w-xl lg:w-[min(100%,28rem)] lg:shrink-0">
+              <Search
+                className="pointer-events-none absolute left-4 top-1/2 z-[1] h-[18px] w-[18px] -translate-y-1/2 text-muted-foreground"
+                strokeWidth={1.75}
+                aria-hidden
+              />
+              <input
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search..."
+                autoComplete="off"
+                className="h-11 w-full rounded-full border-0 bg-white py-2.5 pl-11 pr-11 text-sm text-foreground shadow-[0_1px_3px_hsl(240_18%_8%/0.06)] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 dark:bg-card dark:shadow-[inset_0_0_0_1px_hsl(var(--border)/0.45),0_8px_24px_-12px_hsl(240_24%_4%/0.35)]"
+                aria-label="Search candidates"
+              />
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                disabled={!search}
+                className={cn(
+                  "absolute right-2.5 top-1/2 z-[1] -translate-y-1/2 rounded-full p-1.5 text-muted-foreground transition-colors",
+                  search ? "hover:bg-foreground/[0.06] hover:text-foreground" : "opacity-30"
+                )}
+                aria-label="Clear search"
+              >
+                <X className="h-4 w-4" strokeWidth={1.75} />
+              </button>
+            </div>
+          }
+        />
 
-        <div className="container mx-auto px-4 pt-20 pb-12 md:px-6 md:pt-24 lg:px-8 lg:pt-28 max-w-7xl">
-          <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}
-            className="space-y-6">
+        <div className="w-full overflow-hidden rounded-3xl border border-hairline bg-card shadow-[inset_0_1px_0_0_hsl(var(--foreground)/0.04)]">
+          <div
+            className={`hidden border-b border-hairline bg-muted/25 px-6 py-3.5 font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground lg:grid lg:grid-cols-12 lg:gap-x-5 xl:gap-x-8 lg:px-8 xl:px-10`}
+          >
+            <div className="col-span-2">Name</div>
+            <div className="col-span-3">Email</div>
+            <div className="col-span-2">Position</div>
+            <div className="col-span-2 whitespace-nowrap">Status</div>
+            <div className="col-span-2">PromptIQ</div>
+            <div className="col-span-1 text-right">Open</div>
+          </div>
 
-            {/* Header */}
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h1 className="text-3xl font-bold text-white">Candidates</h1>
-                {!loading && (
-                  <p className="mt-1 text-sm text-zinc-500">
-                    {total} total · {completed} completed · {inProgress} in progress
+          {loading ? (
+            <div className="space-y-0 divide-y divide-border px-6 py-8 lg:px-8 xl:px-10">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="py-5">
+                  <div className="h-10 animate-pulse rounded-lg bg-muted/40" />
+                </div>
+              ))}
+            </div>
+          ) : total === 0 ? (
+            <div className="px-8 py-20 text-center lg:px-12 lg:py-24">
+              <p className="font-serif text-xl text-foreground">{search ? "No matches" : "No candidates yet"}</p>
+              <p className="mx-auto mt-3 max-w-md text-base leading-relaxed text-muted-foreground">
+                {search
+                  ? "Try a different search term."
+                  : "Invite candidates from any position to populate this list."}
+              </p>
+            </div>
+          ) : (
+            <>
+              {pageRows.map((c, i) => (
+                <div
+                  key={c.id}
+                  className={`${rowGrid} px-5 py-5 transition-colors hover:bg-muted/[0.12] md:px-6 lg:px-8 xl:px-10 lg:py-6 ${
+                    i < pageRows.length - 1 ? "border-b border-hairline" : ""
+                  }`}
+                >
+                  <div className="col-span-12 flex min-w-0 items-center gap-3 lg:col-span-2">
+                    <span className="w-14 shrink-0 font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground lg:hidden">
+                      Name
+                    </span>
+                    <EditorialAvatarInitials name={c.name} size="sm" />
+                    <span className="truncate font-serif text-base leading-snug tracking-tight text-foreground">
+                      {c.name}
+                    </span>
+                  </div>
+                  <div className="col-span-12 flex min-w-0 gap-3 lg:col-span-3 lg:block lg:gap-0">
+                    <span className="w-14 shrink-0 pt-0.5 font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground lg:hidden">
+                      Email
+                    </span>
+                    <span className="block truncate font-mono text-[12px] leading-snug text-muted-foreground">{c.email}</span>
+                  </div>
+                  <div className="col-span-12 flex min-w-0 gap-3 truncate lg:col-span-2 lg:block">
+                    <span className="w-14 shrink-0 font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground lg:hidden">
+                      Role
+                    </span>
+                    <span className="truncate text-sm text-muted-foreground">{c.position}</span>
+                  </div>
+                  <div className="col-span-12 flex flex-wrap items-center gap-3 lg:col-span-2 lg:block">
+                    <span className="w-14 shrink-0 font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground lg:hidden">
+                      Status
+                    </span>
+                    <StatusPill status={c.status} />
+                  </div>
+                  <div className="col-span-12 flex items-center justify-between gap-4 lg:col-span-2 lg:flex lg:items-center lg:justify-start lg:text-left">
+                    <span className="w-14 shrink-0 text-left font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground lg:hidden">
+                      IQ
+                    </span>
+                    {c.score !== undefined && c.score > 0 ? (
+                      <PromptIQCell score={c.score} />
+                    ) : (
+                      <span className="font-mono text-xs text-muted-foreground">—</span>
+                    )}
+                  </div>
+                  <div className="col-span-12 flex items-center justify-between gap-4 lg:col-span-1 lg:justify-end">
+                    <span className="w-14 shrink-0 font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground lg:hidden">
+                      Open
+                    </span>
+                    <div className="flex flex-1 justify-end lg:flex-none">
+                      {c.status === "completed" ? (
+                      <Link
+                        href={`/dashboard/results/${c.id}`}
+                        className="inline-flex items-center gap-1 rounded-full border border-accent/30 bg-accent/10 px-3 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-accent transition-colors hover:border-accent/50 hover:bg-accent/15 hover:text-accent-glow"
+                      >
+                        View
+                        <ArrowUpRight className="h-3 w-3" />
+                      </Link>
+                    ) : c.status === "in-progress" ? (
+                      <Link
+                        href={`/dashboard/live/${c.id}`}
+                        className="inline-flex items-center gap-1 rounded-full border border-hairline bg-muted/30 px-3 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-foreground transition-colors hover:border-accent/35 hover:bg-muted/50"
+                      >
+                        Live
+                        <ArrowUpRight className="h-3 w-3" />
+                      </Link>
+                    ) : (
+                      <span className="inline-flex min-h-[32px] items-center justify-end font-mono text-xs text-muted-foreground lg:min-w-[5rem]">
+                        —
+                      </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              {total > 0 && (
+                <div className="flex flex-col items-center justify-between gap-4 border-t border-hairline bg-muted/[0.08] px-5 py-5 md:flex-row md:px-8 xl:px-10">
+                  <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                    Showing <span className="text-foreground">{showingFrom}</span>–
+                    <span className="text-foreground">{showingTo}</span> of{" "}
+                    <span className="text-foreground">{total}</span>
                   </p>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                {showSearch ? (
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-500" />
-                    <input autoFocus value={search} onChange={e => setSearch(e.target.value)}
-                      placeholder="Search candidates…"
-                      className="pl-8 pr-8 py-2 text-sm bg-zinc-900 border border-zinc-700 rounded-lg text-white placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500 w-56" />
-                    <button onClick={() => { setSearch(""); setShowSearch(false) }}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white">
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                ) : (
-                  <button onClick={() => setShowSearch(true)}
-                    className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/60 px-4 py-2 text-sm text-zinc-400 hover:text-white hover:border-zinc-600 transition-colors">
-                    <Search className="h-4 w-4" />Search
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Table */}
-            <div className="rounded-xl border border-zinc-800/60 bg-zinc-950/60 backdrop-blur-sm overflow-hidden">
-              {/* Header row */}
-              <div className="grid grid-cols-[2fr_2fr_2fr_1.5fr_1.5fr_0.8fr] gap-3 border-b border-zinc-800/60 px-5 py-3">
-                {["NAME", "EMAIL", "POSITION", "STATUS", "PROMPTIQ", "ACTION"].map(col => (
-                  <span key={col} className="text-[10px] font-semibold tracking-widest text-zinc-500 uppercase">{col}</span>
-                ))}
-              </div>
-
-              {loading ? (
-                <div className="px-5 py-10 space-y-3">
-                  {Array.from({ length: 5 }).map((_, i) => (
-                    <div key={i} className="h-10 animate-pulse rounded-lg bg-zinc-900/60" />
-                  ))}
+                  {totalPages > 1 && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        aria-label="Previous page"
+                        disabled={safePage <= 1}
+                        onClick={() => setPage((p) => Math.max(1, p - 1))}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-hairline bg-card px-4 py-2 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground transition-colors hover:bg-muted/40 disabled:pointer-events-none disabled:opacity-35"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                        Prev
+                      </button>
+                      <span className="min-w-[7rem] text-center font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                        Page {safePage} / {totalPages}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label="Next page"
+                        disabled={safePage >= totalPages}
+                        onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-hairline bg-card px-4 py-2 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground transition-colors hover:bg-muted/40 disabled:pointer-events-none disabled:opacity-35"
+                      >
+                        Next
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
                 </div>
-              ) : filtered.length === 0 ? (
-                <div className="px-5 py-16 text-center text-sm text-zinc-500">
-                  {search ? "No candidates match your search." : "No candidates yet. Invite candidates from any position."}
-                </div>
-              ) : (
-                filtered.map((c, i) => (
-                  <div key={c.id}
-                    className={`grid grid-cols-[2fr_2fr_2fr_1.5fr_1.5fr_0.8fr] gap-3 items-center px-5 py-3.5 hover:bg-zinc-900/40 transition-colors ${i < filtered.length - 1 ? "border-b border-zinc-800/40" : ""}`}>
-                    {/* Name */}
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <AvatarInitials name={c.name} />
-                      <span className="text-sm font-medium text-white truncate">{c.name}</span>
-                    </div>
-                    {/* Email */}
-                    <span className="text-xs font-mono text-zinc-400 truncate">{c.email}</span>
-                    {/* Position */}
-                    <span className="text-sm text-zinc-300 truncate">{c.position}</span>
-                    {/* Status */}
-                    <StatusBadge status={c.status} />
-                    {/* PromptIQ */}
-                    <div>
-                      {c.score !== undefined && c.score > 0
-                        ? <PromptIQBar score={c.score} />
-                        : <span className="text-sm text-zinc-600">—</span>}
-                    </div>
-                    {/* Action */}
-                    <div>
-                      {c.status === "completed"
-                        ? <Link href={`/dashboard/results/${c.id}`} className="text-xs text-zinc-400 hover:text-white transition-colors">View</Link>
-                        : c.status === "in-progress"
-                        ? <Link href={`/dashboard/live/${c.id}`} className="text-xs text-zinc-400 hover:text-white transition-colors">Live</Link>
-                        : <span className="text-xs text-zinc-600">—</span>}
-                    </div>
-                  </div>
-                ))
               )}
-            </div>
-          </motion.div>
+            </>
+          )}
         </div>
-      </div>
+      </DashboardEditorialShell>
     </ProtectedRoute>
   )
 }

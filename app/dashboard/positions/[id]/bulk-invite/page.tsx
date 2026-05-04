@@ -7,6 +7,7 @@ import { RecruiterNavbar } from "@/components/dashboard/recruiter-navbar"
 import { ProtectedRoute } from "@/components/protected-route"
 import { useAuth } from "@/components/auth-provider"
 import { api } from "@/lib/api"
+import { RECRUITER_DASH_MAIN_INNER } from "@/components/dashboard/editorial/dashboard-editorial-shell"
 import {
   ArrowLeft, Upload, CheckCircle, Sparkles,
   X, FileText, AlertCircle, Clock, Calendar, Zap,
@@ -346,7 +347,8 @@ export default function BulkInvitePage() {
         <div className="relative min-h-screen bg-background">
           <AnimatedBackground />
           <RecruiterNavbar />
-          <div className="container mx-auto px-4 pt-24 pb-12 md:px-6 lg:px-8 max-w-5xl">
+          <div className="w-full px-4 pt-24 pb-12">
+            <div className={RECRUITER_DASH_MAIN_INNER}>
             <div className="mb-8">
               <div className="flex items-center justify-between">
                 <div>
@@ -389,6 +391,7 @@ export default function BulkInvitePage() {
               </div>
             </motion.div>
           </div>
+          </div>
         </div>
       </ProtectedRoute>
     )
@@ -401,7 +404,8 @@ export default function BulkInvitePage() {
         <div className="relative min-h-screen bg-background">
           <AnimatedBackground />
           <RecruiterNavbar />
-          <div className="container mx-auto px-4 pt-24 pb-12 md:px-6 lg:px-8 max-w-5xl">
+          <div className="w-full px-4 pt-24 pb-12">
+            <div className={RECRUITER_DASH_MAIN_INNER}>
             <div className="mb-8">
               <div className="flex items-center justify-between">
                 <div>
@@ -455,6 +459,7 @@ export default function BulkInvitePage() {
               </div>
             </motion.div>
           </div>
+          </div>
         </div>
       </ProtectedRoute>
     )
@@ -467,7 +472,8 @@ export default function BulkInvitePage() {
         <AnimatedBackground />
         <RecruiterNavbar />
 
-        <div className="container mx-auto px-4 pt-20 pb-32 md:px-6 md:pt-24 lg:px-8 lg:pt-28 max-w-5xl">
+        <div className="w-full px-4 pt-20 pb-32 md:pt-24 lg:pt-28">
+          <div className={RECRUITER_DASH_MAIN_INNER}>
 
           {/* Header */}
           <motion.div
@@ -794,11 +800,13 @@ export default function BulkInvitePage() {
             )}
           </AnimatePresence>
         </div>
+        </div>
 
         {/* ── Fixed bottom bar ── */}
         <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-zinc-800/60 bg-zinc-950/90 backdrop-blur-md">
-          <div className="container mx-auto max-w-5xl px-4 md:px-6 lg:px-8">
-            <div className="flex items-center justify-between py-4 gap-4">
+          <div className="w-full px-4">
+            <div className={RECRUITER_DASH_MAIN_INNER}>
+              <div className="flex items-center justify-between py-4 gap-4">
               <div className="text-xs text-zinc-500 min-w-0 flex items-center gap-2">
                 {step === 2 && validCandidates.length > 0 && (
                   <>
@@ -848,6 +856,7 @@ export default function BulkInvitePage() {
                   </button>
                 )}
               </div>
+            </div>
             </div>
           </div>
         </div>

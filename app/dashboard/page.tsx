@@ -1,21 +1,30 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useMemo, useState, useEffect, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { ProtectedRoute } from "@/components/protected-route"
-import { Button } from "@/components/ui/button"
-import { LayoutGrid, List, Plus } from "lucide-react"
 import { RecruiterNavbar } from "@/components/dashboard/recruiter-navbar"
-import { JobCard } from "@/components/dashboard/job-card"
+import {
+  RECRUITER_DASH_MAIN_OUTER,
+  RECRUITER_DASH_MAIN_INNER,
+} from "@/components/dashboard/editorial/dashboard-editorial-shell"
 import { CandidateList } from "@/components/dashboard/candidate-list"
-import { DashboardStats } from "@/components/dashboard/dashboard-stats"
-import { PromptIQChart } from "@/components/dashboard/promptiq-chart"
-import { AIUsageBreakdown } from "@/components/dashboard/ai-usage-breakdown"
-import { AnimatedBackground } from "@/components/animated-background"
 import { api } from "@/lib/api"
 import { CreateAssessmentModal } from "@/components/dashboard/create-assessment-modal"
-import { useAuth } from "@/components/auth-provider"
-import { motion } from "framer-motion"
+import { DashboardHero } from "@/components/dashboard/editorial/dashboard-hero"
+import { DashboardMetricStrip } from "@/components/dashboard/editorial/dashboard-metric-strip"
+import { SubmissionsPipelineSection } from "@/components/dashboard/editorial/submissions-pipeline"
+import {
+  PositionsEditorialTable,
+  type EditorialPositionRow,
+} from "@/components/dashboard/editorial/positions-table"
+import { ActivityInsightSection } from "@/components/dashboard/editorial/activity-insight"
+import {
+  avgPromptIQFromSubmissions,
+  buildActivityFeed,
+  completedAssessmentsPrevWeek,
+  completedAssessmentsThisWeek,
+} from "@/components/dashboard/editorial/dashboard-data"
 
 function getGreeting() {
   const h = new Date().getHours()
@@ -25,100 +34,194 @@ function getGreeting() {
 }
 
 export default function DashboardPage() {
-  const { user } = useAuth()
   const router = useRouter()
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
   const [sessions, setSessions] = useState<any[]>([])
   const [assessments, setAssessments] = useState<any[]>([])
+  const [submissions, setSubmissions] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [createModalOpen, setCreateModalOpen] = useState(false)
-  const [activeFilter, setActiveFilter] = useState<"all" | "active" | "inactive">("all")
 
-  const loadAssessments = async () => {
+  const loadDashboard = useCallback(async () => {
     try {
       setLoading(true)
-      const activeParam = activeFilter === 'active' ? 'true' : activeFilter === 'inactive' ? 'false' : undefined
-      const url = activeParam ? `/api/assessments?active=${activeParam}` : '/api/assessments'
-
-      const [assessmentsRes, sessionsRes] = await Promise.all([
-        api.get(url)
-          .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json() })
-          .then(data => data.success ? (data.data || []) : [])
+      const [assessmentsRes, sessionsRes, submissionsRes] = await Promise.all([
+        api
+          .get("/api/assessments")
+          .then((res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`)
+            return res.json()
+          })
+          .then((data) => (data.success ? data.data || [] : []))
           .catch(() => []),
-        api.get('/api/sessions')
-          .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json() })
-          .then(data => data.success ? (data.data || []) : [])
-          .catch(() => [])
+        api
+          .get("/api/sessions")
+          .then((res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`)
+            return res.json()
+          })
+          .then((data) => (data.success ? data.data || [] : []))
+          .catch(() => []),
+        api
+          .get("/api/submissions")
+          .then((r) => r.json())
+          .catch(() => ({ success: false, data: [] })),
       ])
 
       setAssessments(assessmentsRes)
       setSessions(sessionsRes)
+      setSubmissions(submissionsRes.success ? submissionsRes.data || [] : [])
     } catch (error) {
-      console.error('Error loading data:', error)
+      console.error("Error loading dashboard:", error)
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
-    if (typeof window === 'undefined') return
-    loadAssessments()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeFilter])
+    if (typeof window === "undefined") return
+    loadDashboard()
+  }, [loadDashboard])
 
-  const jobs = assessments.map((assessment) => {
-    const assessmentSessions = sessions.filter(s => s.assessmentId === assessment.id)
-    const candidatesSelected = assessmentSessions.length
-    const candidatesAttempted = assessmentSessions.filter(s => s.status === 'active' || s.status === 'submitted').length
-    const candidatesCompleted = assessmentSessions.filter(s => s.status === 'submitted').length
-    const isActive = assessment.isActive !== undefined ? assessment.isActive : true
+  const sessionIds = useMemo(() => new Set(sessions.map((s: any) => String(s.id))), [sessions])
 
-    return {
-      id: assessment.id,
-      title: assessment.jobTitle || assessment.role || 'Untitled Assessment',
-      department: assessment.level || 'Engineering',
-      location: 'Remote',
-      company: assessment.company?.name || 'Your Company',
-      companyLogo: assessment.company?.logo || null,
-      candidatesSelected,
-      candidatesAttempted,
-      candidatesCompleted,
-      assessmentType: 'Technical Assessment',
-      createdAt: assessment.createdAt ? new Date(assessment.createdAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-      status: isActive ? 'active' as const : 'draft' as const,
-      isActive
-    }
-  })
+  const assessmentTitle = useCallback(
+    (aid: string) => {
+      const a = assessments.find((x: any) => String(x.id) === aid)
+      return a?.jobTitle || a?.role || "Assessment"
+    },
+    [assessments]
+  )
 
-  const handleToggleStatus = async (assessmentId: string, currentStatus: boolean) => {
-    try {
-      const response = await api.patch(`/api/assessments/${assessmentId}/status`, { isActive: !currentStatus })
-      const data = await response.json()
-      if (data.success) loadAssessments()
-      else alert(data.error || 'Failed to update assessment status')
-    } catch (error: any) {
-      alert(error.message || 'Failed to update assessment status')
-    }
-  }
-
-  const handleDeleteAssessment = async (assessmentId: string) => {
-    if (!confirm('Are you sure you want to delete this assessment? This action cannot be undone.')) return
-    try {
-      const response = await api.delete(`/api/assessments/${assessmentId}`)
-      const data = await response.json()
-      if (data.success) {
-        loadAssessments()
-        if (selectedJobId === assessmentId) setSelectedJobId(null)
-      } else {
-        alert(data.error || 'Failed to delete assessment')
+  const jobs = useMemo(() => {
+    return assessments.map((assessment: any) => {
+      const assessmentSessions = sessions.filter((s) => s.assessmentId === assessment.id)
+      const candidatesSelected = assessmentSessions.length
+      const isActive = assessment.isActive !== undefined ? assessment.isActive : true
+      return {
+        id: assessment.id,
+        title: assessment.jobTitle || assessment.role || "Untitled Assessment",
+        department: assessment.level || "Engineering",
+        candidatesSelected,
+        createdAt: assessment.createdAt
+          ? new Date(assessment.createdAt).toISOString().split("T")[0]
+          : new Date().toISOString().split("T")[0],
+        isActive,
       }
-    } catch (error: any) {
-      alert(error.message || 'Failed to delete assessment')
-    }
-  }
+    })
+  }, [assessments, sessions])
 
-  const selectedJob = jobs.find((job) => job.id === selectedJobId) || assessments.find(a => a.id === selectedJobId)
+  const editorialRows: EditorialPositionRow[] = useMemo(() => {
+    return jobs.map((job) => {
+      const ids = sessions.filter((s) => s.assessmentId === job.id).map((s) => String(s.id))
+      const subs = submissions.filter((sub) =>
+        ids.includes(String(sub.sessionId || sub.session_id))
+      )
+      const iq =
+        subs.length > 0
+          ? Math.round(subs.reduce((sum, sub) => sum + (Number(sub.score) || 0), 0) / subs.length)
+          : null
+      const created = new Date(job.createdAt)
+      const days = Math.max(0, Math.floor((Date.now() - created.getTime()) / 86400000))
+      const tags = [job.department].filter(Boolean)
+      return {
+        id: job.id,
+        title: job.title,
+        status: job.isActive ? ("Live" as const) : ("Draft" as const),
+        iq,
+        candidates: job.candidatesSelected,
+        days,
+        tags,
+      }
+    })
+  }, [jobs, sessions, submissions])
+
+  const avgIQ = useMemo(
+    () => avgPromptIQFromSubmissions(submissions, sessionIds),
+    [submissions, sessionIds]
+  )
+
+  const weekCompleted = useMemo(() => completedAssessmentsThisWeek(sessions), [sessions])
+  const prevWeekCompleted = useMemo(() => completedAssessmentsPrevWeek(sessions), [sessions])
+  const weekDeltaPct = useMemo(() => {
+    if (prevWeekCompleted > 0)
+      return Math.round(((weekCompleted - prevWeekCompleted) / prevWeekCompleted) * 100)
+    return weekCompleted > 0 ? 100 : null
+  }, [weekCompleted, prevWeekCompleted])
+
+  const activeRoles = useMemo(
+    () => assessments.filter((a: any) => a.isActive !== false).length,
+    [assessments]
+  )
+
+  const hiringThisWeek = useMemo(() => {
+    const cutoff = Date.now() - 7 * 86400000
+    return assessments.filter((a: any) => {
+      const t = new Date(a.createdAt || 0).getTime()
+      return t >= cutoff && a.isActive !== false
+    }).length
+  }, [assessments])
+
+  const awaitingReview = sessions.filter((s) => s.status === "submitted").length
+  const activeLive = sessions.filter((s) => s.status === "active").length
+  const activity = useMemo(
+    () => buildActivityFeed(sessions as any[], assessmentTitle, 6),
+    [sessions, assessmentTitle]
+  )
+
+  const above90Week = useMemo(() => {
+    const cutoff = Date.now() - 7 * 86400000
+    const seen = new Set<string>()
+    for (const sub of submissions) {
+      if ((Number(sub.score) || 0) < 90) continue
+      const sid = String(sub.sessionId || sub.session_id)
+      const sess = sessions.find((s) => String(s.id) === sid)
+      const t = new Date(sess?.submittedAt || sess?.updatedAt || 0).getTime()
+      if (t >= cutoff && !seen.has(sid)) seen.add(sid)
+    }
+    return seen.size
+  }, [submissions, sessions])
+
+  const { topScore, topName } = useMemo(() => {
+    let best: number | null = null
+    let name: string | null = null
+    for (const sub of submissions) {
+      const sc = Number(sub.score) || 0
+      if (best != null && sc <= best) continue
+      best = sc
+      const sid = String(sub.sessionId || sub.session_id)
+      const sess = sessions.find((s) => String(s.id) === sid)
+      name = String(sess?.candidateName || sess?.candidate_name || "Candidate")
+    }
+    return { topScore: best, topName: name }
+  }, [submissions, sessions])
+
+  const insightHeadline = useMemo(() => {
+    if (above90Week > 0) {
+      const n = Math.min(above90Week, 99)
+      return (
+        <>
+          Your top{" "}
+          <span className="display-italic text-accent-glow">{n}</span>{" "}
+          {n === 1 ? "candidate" : "candidates"} this week scored above{" "}
+          <span className="display-italic text-accent-glow">90.</span>
+        </>
+      )
+    }
+    return (
+      <>
+        <span className="display-italic text-accent-glow">PromptIQ</span> highlights appear once candidates
+        finish assessments — keep your pipeline moving.
+      </>
+    )
+  }, [above90Week])
+
+  const insightBody = useMemo(() => {
+    if (above90Week > 0 && avgIQ > 0) {
+      return `Your rolling average PromptIQ is ${avgIQ}. Strong scores often correlate with clear problem decomposition — consider prioritizing those candidates for live rounds.`
+    }
+    return "PromptIQ measures how thoughtfully candidates collaborate with AI — not just whether code compiles. Use submissions over time to spot momentum in your funnel."
+  }, [above90Week, avgIQ])
 
   const filteredCandidates = selectedJobId
     ? sessions
@@ -127,202 +230,107 @@ export default function DashboardPage() {
           const formatDate = (date: string | Date | null | undefined) => {
             if (!date) return undefined
             try {
-              return new Date(date).toLocaleString('en-US', {
-                month: 'short', day: 'numeric', year: 'numeric',
-                hour: 'numeric', minute: '2-digit', hour12: true
+              return new Date(date).toLocaleString("en-US", {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+                hour12: true,
               })
-            } catch { return undefined }
+            } catch {
+              return undefined
+            }
           }
           return {
             id: s.id,
             sessionId: s.id,
-            name: s.candidateName || s.candidate_name || 'Unknown',
-            email: s.candidateEmail || s.candidate_email || '',
+            name: s.candidateName || s.candidate_name || "Unknown",
+            email: s.candidateEmail || s.candidate_email || "",
             jobId: s.assessmentId || selectedJobId,
-            assessmentStatus: (s.status === 'pending' ? 'not-started' : s.status === 'active' ? 'in-progress' : 'completed') as 'not-started' | 'in-progress' | 'completed',
+            assessmentStatus: (s.status === "pending"
+              ? "not-started"
+              : s.status === "active"
+                ? "in-progress"
+                : "completed") as "not-started" | "in-progress" | "completed",
             score: s.score,
             attemptedAt: formatDate(s.startedAt || s.started_at),
             submittedAt: formatDate(s.submittedAt || s.submitted_at),
             duration: s.timeLimit ? `${Math.floor(s.timeLimit / 60)}m` : undefined,
-            complianceViolations: 0
+            complianceViolations: 0,
           }
         })
     : []
 
-  const activeSessionCount = sessions.filter(s => s.status === 'active').length
-  const awaitingReview = sessions.filter(s => s.status === 'submitted').length
-  const firstName = user?.name?.split(' ')[0] || 'there'
+  const selectedJob = jobs.find((job) => job.id === selectedJobId) || assessments.find((a: any) => a.id === selectedJobId)
 
   return (
     <ProtectedRoute requiredRole="recruiter">
-      <div className="relative min-h-screen bg-background">
-        <AnimatedBackground />
+      <div className="hero-bg hero-bg-grid relative min-h-screen text-foreground">
         <RecruiterNavbar />
 
-        <div className="container mx-auto px-4 pt-20 pb-12 md:px-6 md:pt-24 lg:px-8 lg:pt-28 max-w-7xl">
-
-          {/* ── MAIN DASHBOARD VIEW ── */}
+        <main className={RECRUITER_DASH_MAIN_OUTER}>
+          <div className={RECRUITER_DASH_MAIN_INNER}>
           {!selectedJobId ? (
-            <div className="space-y-8">
+            <>
+              <DashboardHero
+                greeting={getGreeting()}
+                awaitingReview={awaitingReview}
+                activeLive={activeLive}
+                onNewPosition={() => setCreateModalOpen(true)}
+                onReviewQueue={() => router.push("/dashboard/reports")}
+              />
 
-              {/* Greeting header */}
-              <motion.div
-                initial={{ opacity: 0, y: 16 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5 }}
-                className="flex items-start justify-between gap-4"
-              >
-                <div>
-                  <h1 className="text-3xl font-bold text-white">{getGreeting()}, {firstName}</h1>
-                  <p className="mt-1.5 flex items-center gap-2 text-sm text-zinc-400">
-                    {activeSessionCount > 0 && (
-                      <>
-                        <span className="flex items-center gap-1.5">
-                          <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-                          {activeSessionCount} assessment{activeSessionCount !== 1 ? 's' : ''} running now
-                        </span>
-                        {awaitingReview > 0 && <span className="text-zinc-600">·</span>}
-                      </>
-                    )}
-                    {awaitingReview > 0 && (
-                      <span>{awaitingReview} awaiting your review</span>
-                    )}
-                    {activeSessionCount === 0 && awaitingReview === 0 && (
-                      <span>No active sessions right now</span>
-                    )}
-                  </p>
-                </div>
-                <Button
-                  onClick={() => setCreateModalOpen(true)}
-                  className="bg-white text-black hover:bg-zinc-200 gap-2 font-medium flex-shrink-0"
-                >
-                  <Plus className="h-4 w-4" />
-                  New Position
-                </Button>
-              </motion.div>
+              <DashboardMetricStrip
+                weekCompleted={weekCompleted}
+                weekDeltaPct={weekDeltaPct}
+                avgPromptIQ={avgIQ}
+                activeRoles={activeRoles}
+                hiringThisWeek={hiringThisWeek}
+                inReview={awaitingReview}
+                loading={loading}
+              />
 
-              {/* Stat tiles */}
-              <DashboardStats />
+              <SubmissionsPipelineSection sessions={sessions} />
 
-              {/* Charts — 60/40 split */}
-              <div className="grid gap-6 md:grid-cols-[3fr_2fr]">
-                <PromptIQChart sessions={sessions} />
-                <AIUsageBreakdown sessions={sessions} />
-              </div>
+              <PositionsEditorialTable
+                positions={editorialRows}
+                loading={loading}
+                onOpenPosition={(id) => setSelectedJobId(id)}
+              />
 
-              {/* Positions section */}
-              <div>
-                {/* Section header */}
-                <div className="mb-4 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <h2 className="text-xs font-semibold tracking-widest text-zinc-500 uppercase">
-                      Recent Positions
-                    </h2>
-                    {!loading && (
-                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-zinc-800 text-[10px] font-medium text-zinc-400">
-                        {Math.min(jobs.length, 5)}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {/* Filter pills */}
-                    <div className="flex gap-1 rounded-lg border border-zinc-800 bg-zinc-900/50 p-0.5">
-                      {(["all", "active", "inactive"] as const).map((f) => (
-                        <button
-                          key={f}
-                          onClick={() => setActiveFilter(f)}
-                          className={`rounded-md px-3 py-1 text-xs font-medium transition-colors capitalize ${
-                            activeFilter === f
-                              ? "bg-white text-black"
-                              : "text-zinc-400 hover:text-white"
-                          }`}
-                        >
-                          {f}
-                        </button>
-                      ))}
-                    </div>
-                    {/* View mode */}
-                    <div className="flex gap-1 rounded-lg border border-zinc-800 bg-zinc-900/50 p-0.5">
-                      <button
-                        onClick={() => setViewMode("grid")}
-                        className={`rounded-md p-1.5 transition-colors ${viewMode === "grid" ? "bg-white text-black" : "text-zinc-400 hover:text-white"}`}
-                      >
-                        <LayoutGrid className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        onClick={() => setViewMode("list")}
-                        className={`rounded-md p-1.5 transition-colors ${viewMode === "list" ? "bg-white text-black" : "text-zinc-400 hover:text-white"}`}
-                      >
-                        <List className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {loading ? (
-                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                    {Array.from({ length: 3 }).map((_, i) => (
-                      <div key={i} className="h-48 animate-pulse rounded-xl bg-zinc-900/60 border border-zinc-800/60" />
-                    ))}
-                  </div>
-                ) : jobs.length > 0 ? (
-                  <>
-                    <div className={viewMode === "grid" ? "grid gap-4 md:grid-cols-2 lg:grid-cols-3" : "space-y-3"}>
-                      {jobs.slice(0, 5).map((job) => (
-                        <JobCard
-                          key={job.id}
-                          job={job}
-                          onClick={() => setSelectedJobId(job.id)}
-                          isSelected={false}
-                          onToggleStatus={handleToggleStatus}
-                          onDelete={handleDeleteAssessment}
-                        />
-                      ))}
-                    </div>
-                    {jobs.length > 5 && (
-                      <div className="mt-4 text-center">
-                        <button
-                          onClick={() => router.push("/dashboard/positions")}
-                          className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors border border-zinc-800 hover:border-zinc-600 rounded-lg px-4 py-2"
-                        >
-                          View all {jobs.length} positions →
-                        </button>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <div className="rounded-xl border border-zinc-800/60 bg-zinc-950/60 py-16 text-center">
-                    <p className="text-zinc-500 mb-4">No positions yet</p>
-                    <Button
-                      onClick={() => setCreateModalOpen(true)}
-                      className="bg-white text-black hover:bg-zinc-200 gap-2"
-                    >
-                      <Plus className="h-4 w-4" />
-                      Create Your First Position
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </div>
-
+              <ActivityInsightSection
+                activity={activity}
+                headline={insightHeadline}
+                body={insightBody}
+                topScore={topScore}
+                topName={topName}
+                reportHref="/dashboard/reports"
+              />
+            </>
           ) : (
-            /* ── POSITION DETAIL VIEW ── */
             <CandidateList
               candidates={filteredCandidates}
-              jobTitle={selectedJob?.title || selectedJob?.jobTitle || selectedJob?.role || "Assessment"}
-              isActive={selectedJob?.isActive ?? selectedJob?.status === 'active'}
+              jobTitle={
+                (selectedJob as any)?.title ||
+                (selectedJob as any)?.jobTitle ||
+                (selectedJob as any)?.role ||
+                "Assessment"
+              }
+              isActive={(selectedJob as any)?.isActive ?? true}
               onBack={() => setSelectedJobId(null)}
               assessmentId={selectedJobId ?? undefined}
-              onRefresh={loadAssessments}
+              onRefresh={loadDashboard}
             />
           )}
         </div>
+        </main>
       </div>
 
       <CreateAssessmentModal
         open={createModalOpen}
         onOpenChange={setCreateModalOpen}
-        onSuccess={loadAssessments}
+        onSuccess={loadDashboard}
       />
     </ProtectedRoute>
   )

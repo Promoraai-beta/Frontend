@@ -1,0 +1,195 @@
+/* Act 2 — The Wound
+   A hiring scoresheet that assembles on scroll, making the
+   industry's measurement gap visible through document aesthetics.
+
+   The section has no explicit height — GSAP pinSpacing adds the
+   80vh extra space needed to scroll through all rows.             */
+
+/* ─── Section & Pinned Content ────────────────────────────────────────── */
+
+.section {
+  background-color: var(--ink);
+  /* No height — GSAP pinSpacing: true will inject the spacer div  */
+}
+
+.content {
+  height: 100svh;
+  background-color: var(--ink);
+  /* Left-rail alignment, cleared below nav top (64px nav + breathing) */
+  padding-top: 96px;
+  padding-left: var(--margin-h);
+  padding-right: var(--margin-h);
+  padding-bottom: 48px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  position: relative;
+}
+
+/* ─── Scoresheet ───────────────────────────────────────────────────────── */
+
+/* The document floats on the dark page — no card, no background */
+.sheet {
+  width: 480px;
+  max-width: 100%;
+}
+
+/* ─── Rows ─────────────────────────────────────────────────────────────── */
+
+.row {
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  border-bottom: 1px solid var(--pm-border);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1;
+  /* GSAP starts all rows hidden — will-change ensures GPU compositing */
+  will-change: transform, opacity;
+}
+
+/* ─── Columns ──────────────────────────────────────────────────────────── */
+
+.label {
+  width: 260px;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  padding-right: 16px;
+}
+
+.status {
+  width: 40px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.rating {
+  flex: 1;
+  color: var(--text-secondary);
+}
+
+/* ─── ??? Cells ─────────────────────────────────────────────────────────── */
+
+/* Wrapper for cells that need the amber background treatment */
+.qCell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 6px;
+  /* CSS hover transition on background (separate from GSAP-animated layer) */
+}
+
+/* GSAP-animated amber background layer — starts invisible */
+.qBg {
+  position: absolute;
+  inset: 0;
+  background: var(--signal-dim);    /* rgba(232,200,122,0.12) */
+  border-radius: 2px;
+  /* opacity animated by GSAP: 0 → 1 */
+  will-change: opacity;
+  pointer-events: none;
+}
+
+/* Pure CSS hover layer — adds extra amber without touching GSAP state.
+   Background increases from 12% → 22% per spec 3.3.
+   This layer adds an additional ~10% on top of signal-dim.       */
+.qHover {
+  position: absolute;
+  inset: 0;
+  background: rgba(232, 200, 122, 0.10);
+  border-radius: 2px;
+  opacity: 0;
+  transition: opacity 200ms ease;
+  pointer-events: none;
+}
+
+.qCell:hover .qHover {
+  opacity: 1;
+}
+
+/* Background transition on the GSAP layer for hover: once filled,
+   a direct background change is safe (GSAP only touches opacity).  */
+.qBg {
+  transition: background 200ms ease;
+}
+
+/* The "???" text — GSAP animates this from opacity 0 → 1 */
+.qText {
+  position: relative;
+  z-index: 1;
+  color: var(--signal);
+  /* opacity animated by GSAP: 0 → 1 */
+  will-change: opacity;
+}
+
+/* ─── Gut Feeling Row ──────────────────────────────────────────────────── */
+
+/* Heavier border-top signals finality */
+.gutRow {
+  display: flex;
+  align-items: center;
+  min-height: 52px;
+  border-top: 2px solid var(--pm-border-active);
+  font-family: var(--font-mono);
+  font-size: 16px;  /* slightly larger than other rows */
+  will-change: transform, opacity;
+}
+
+.gutLabel {
+  width: 260px;
+  flex-shrink: 0;
+  color: var(--text-primary);
+  padding-right: 16px;
+}
+
+/* Empty status column on gut row */
+.gutStatus {
+  width: 40px;
+  flex-shrink: 0;
+}
+
+.gutRating {
+  flex: 1;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* ─── Tagline ───────────────────────────────────────────────────────────── */
+
+/* Appears at 78vh of the pin, slides in from X-24px */
+.tagline {
+  margin-top: 40px;
+  font-family: var(--font-ui);
+  font-size: 16px;
+  line-height: var(--lh-body);
+  color: var(--text-secondary);
+  max-width: 480px;
+  will-change: transform, opacity;
+}
+
+/* ─── Mobile ─────────────────────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  .sheet {
+    width: 100%;
+  }
+
+  .label {
+    width: 180px;
+    font-size: 12px;
+  }
+
+  .status {
+    width: 32px;
+    font-size: 12px;
+  }
+
+  .rating {
+    font-size: 12px;
+  }
+
+  .gutRow {
+    font-size: 14px;
+  }
+}

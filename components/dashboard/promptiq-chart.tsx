@@ -1,7 +1,7 @@
 "use client"
 
 import { Card } from "@/components/ui/card"
-import { TrendingUp, FileCheck } from "lucide-react"
+import { TrendingDown, TrendingUp, FileCheck } from "lucide-react"
 import {
   Area,
   AreaChart,
@@ -42,11 +42,11 @@ function getWeeklySubmissions(sessions: any[]) {
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
     return (
-      <div className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm shadow-xl">
-        <p className="text-zinc-400">{label}</p>
-        <p className="font-bold text-white">
+      <div className="rounded-xl border border-border bg-popover px-3 py-2 text-sm shadow-lg">
+        <p className="text-muted-foreground">{label}</p>
+        <p className="font-semibold text-popover-foreground">
           {payload[0].value}{" "}
-          <span className="font-normal text-zinc-400">
+          <span className="font-normal text-muted-foreground">
             submission{payload[0].value !== 1 ? "s" : ""}
           </span>
         </p>
@@ -71,48 +71,53 @@ export function PromptIQChart({ sessions }: Props) {
   const lastPoint = data[data.length - 1]
 
   return (
-    <Card className="border-zinc-800/60 bg-zinc-950/60 p-6 backdrop-blur-sm">
-      <div className="mb-5 flex items-center justify-between">
+    <Card className="rounded-2xl border border-border bg-card p-6 shadow-none">
+      <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <FileCheck className="h-4 w-4 text-zinc-300" />
-            <h3 className="text-base font-semibold text-white">Submissions Over Time</h3>
+            <FileCheck className="h-4 w-4 text-accent" />
+            <h3 className="font-serif text-lg font-medium tracking-tight text-foreground">Submissions over time</h3>
           </div>
-          <p className="mt-0.5 text-xs text-zinc-500">Completed assessments per week</p>
+          <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
+            Completed assessments per week
+          </p>
         </div>
         {trend !== null && (
-          <div className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium border ${
-            trend >= 0
-              ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
-              : "bg-red-500/10 border-red-500/20 text-red-400"
-          }`}>
-            <TrendingUp className="h-3 w-3" />
-            <span>{trend >= 0 ? "+" : ""}{trend}%</span>
+          <div
+            className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[11px] font-bold uppercase tracking-wide ${
+              trend >= 0
+                ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                : "border-red-500/25 bg-red-500/10 text-red-700 dark:text-red-400"
+            }`}
+          >
+            {trend >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+            <span>
+              {trend >= 0 ? "+" : ""}
+              {trend}%
+            </span>
           </div>
         )}
-        {total === 0 && (
-          <span className="text-xs text-zinc-600">No data yet</span>
-        )}
+        {total === 0 && <span className="text-xs text-muted-foreground">No data yet</span>}
       </div>
 
       <ResponsiveContainer width="100%" height={180}>
         <AreaChart data={data} margin={{ top: 8, right: 8, left: -24, bottom: 0 }}>
           <defs>
             <linearGradient id="submissionsGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#ffffff" stopOpacity={0.15} />
-              <stop offset="100%" stopColor="#ffffff" stopOpacity={0} />
+              <stop offset="0%" stopColor="hsl(var(--accent))" stopOpacity={0.22} />
+              <stop offset="100%" stopColor="hsl(var(--accent))" stopOpacity={0} />
             </linearGradient>
           </defs>
-          <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--hairline))" vertical={false} />
           <XAxis
             dataKey="label"
-            stroke="#52525b"
+            stroke="hsl(var(--muted-foreground))"
             fontSize={11}
             tickLine={false}
             axisLine={false}
           />
           <YAxis
-            stroke="#52525b"
+            stroke="hsl(var(--muted-foreground))"
             fontSize={11}
             tickLine={false}
             axisLine={false}
@@ -123,19 +128,19 @@ export function PromptIQChart({ sessions }: Props) {
           <Area
             type="monotone"
             dataKey="count"
-            stroke="#ffffff"
+            stroke="hsl(var(--accent))"
             strokeWidth={2}
             fill="url(#submissionsGrad)"
             dot={false}
-            activeDot={{ r: 4, fill: "#fff", strokeWidth: 0 }}
+            activeDot={{ r: 4, fill: "hsl(var(--accent))", strokeWidth: 0 }}
           />
           {lastPoint?.count > 0 && (
             <ReferenceDot
               x={lastPoint.label}
               y={lastPoint.count}
               r={5}
-              fill="#ffffff"
-              stroke="#ffffff"
+              fill="hsl(var(--accent))"
+              stroke="hsl(var(--accent))"
               strokeWidth={0}
             />
           )}
