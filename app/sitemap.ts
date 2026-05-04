@@ -1,8 +1,7 @@
 import type { MetadataRoute } from "next"
+import { getSiteUrl } from "@/lib/site-metadata"
 
-const siteUrl =
-  process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
-  "https://promoraai.com"
+const siteUrl = getSiteUrl()
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const paths: { path: string; changeFrequency: MetadataRoute.Sitemap[0]["changeFrequency"]; priority: number }[] =

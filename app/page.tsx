@@ -11,8 +11,24 @@ import { Pricing } from "@/components/landing/pricing"
 import { FAQ } from "@/components/landing/faq"
 import { ClosingCTA } from "@/components/landing/closing-cta"
 import { LandingFooter } from "@/components/landing/landing-footer"
+import { getSiteUrl, SITE_DESCRIPTION, SITE_TITLE } from "@/lib/site-metadata"
+
+const siteUrl = getSiteUrl()
 
 export const metadata: Metadata = {
+  title: {
+    absolute: SITE_TITLE,
+  },
+  description: SITE_DESCRIPTION,
+  openGraph: {
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+    url: siteUrl,
+  },
+  twitter: {
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+  },
   alternates: {
     canonical: "/",
   },

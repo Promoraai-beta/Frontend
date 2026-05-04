@@ -6,6 +6,11 @@ import { ThemeProvider } from "@/components/theme-provider"
 import { AnalyticsWrapper } from "@/components/analytics-wrapper"
 import { ConsoleFilter } from "@/components/console-filter"
 import "@/lib/console-filter-inline"
+import {
+  getSiteUrl,
+  SITE_DESCRIPTION,
+  SITE_TITLE,
+} from "@/lib/site-metadata"
 import "./globals.css"
 
 const inter = Inter({
@@ -32,34 +37,28 @@ const spaceMono = Space_Mono({
   variable: "--font-space-mono",
 })
 
-const siteUrl =
-  process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
-  "https://promoraai.com"
-
-const defaultTitle =
-  "Promora AI | Hiring assessments that measure how candidates use AI"
-const defaultDescription =
-  "Promora AI measures how candidates use AI tools across coding, writing, and analysis—not just final output. PromptIQ scores AI collaboration for hiring teams."
+const siteUrl = getSiteUrl()
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: defaultTitle,
+    default: SITE_TITLE,
     template: "%s · Promora AI",
   },
-  description: defaultDescription,
+  description: SITE_DESCRIPTION,
   applicationName: "Promora AI",
   icons: {
     icon: [
+      { url: "/favicon-mark-black.svg", type: "image/svg+xml" },
       { url: "/favicon.ico" },
       { url: "/Promora-Logo.svg", type: "image/svg+xml" },
     ],
-    shortcut: "/favicon.ico",
+    shortcut: "/favicon-mark-black.svg",
     apple: "/Promora-Logo.svg",
   },
   openGraph: {
-    title: defaultTitle,
-    description: defaultDescription,
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
     type: "website",
     url: siteUrl,
     siteName: "Promora AI",
@@ -67,8 +66,8 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: defaultTitle,
-    description: defaultDescription,
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
   },
   robots: {
     index: true,
@@ -86,7 +85,7 @@ const organizationJsonLd = {
   name: "Promora AI",
   url: siteUrl,
   logo: `${siteUrl}/Promora-Logo.svg`,
-  description: defaultDescription,
+  description: SITE_DESCRIPTION,
 }
 
 export default function RootLayout({
