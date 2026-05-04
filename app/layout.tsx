@@ -32,27 +32,61 @@ const spaceMono = Space_Mono({
   variable: "--font-space-mono",
 })
 
+const siteUrl =
+  process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
+  "https://promoraai.com"
+
+const defaultTitle =
+  "Promora AI | Hiring assessments that measure how candidates use AI"
+const defaultDescription =
+  "Promora AI measures how candidates use AI tools across coding, writing, and analysis—not just final output. PromptIQ scores AI collaboration for hiring teams."
+
 export const metadata: Metadata = {
-  title: "Promora — Evaluate How Candidates work with AI",
-  description:
-    "See exactly how every candidate works with AI before you make a call. Promora measures AI collaboration — not just whether the code compiles.",
+  metadataBase: new URL(siteUrl),
+  title: {
+    default: defaultTitle,
+    template: "%s · Promora AI",
+  },
+  description: defaultDescription,
+  applicationName: "Promora AI",
   icons: {
-    icon: "/Promora-Logo.svg",
-    shortcut: "/Promora-Logo.svg",
+    icon: [
+      { url: "/favicon.ico" },
+      { url: "/Promora-Logo.svg", type: "image/svg+xml" },
+    ],
+    shortcut: "/favicon.ico",
     apple: "/Promora-Logo.svg",
   },
   openGraph: {
-    title: "Promora — Evaluate How Candidates work with AI",
-    description:
-      "See exactly how every candidate works with AI before you make a call.",
+    title: defaultTitle,
+    description: defaultDescription,
     type: "website",
+    url: siteUrl,
+    siteName: "Promora AI",
+    locale: "en_US",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Promora — Evaluate How Candidates work with AI",
-    description:
-      "See exactly how every candidate works with AI before you make a call.",
+    title: defaultTitle,
+    description: defaultDescription,
   },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+    },
+  },
+}
+
+const organizationJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  name: "Promora AI",
+  url: siteUrl,
+  logo: `${siteUrl}/Promora-Logo.svg`,
+  description: defaultDescription,
 }
 
 export default function RootLayout({
@@ -67,6 +101,12 @@ export default function RootLayout({
       className={`${inter.variable} ${fraunces.variable} ${jetbrainsMono.variable} ${spaceMono.variable}`}
     >
       <body className={`${inter.className} antialiased`}>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify(organizationJsonLd),
+          }}
+        />
         <ThemeProvider attribute="class" defaultTheme="light" enableSystem>
           <ConsoleFilter />
           <AuthProvider>{children}</AuthProvider>
