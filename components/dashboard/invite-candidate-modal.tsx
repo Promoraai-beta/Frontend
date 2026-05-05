@@ -1,12 +1,10 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { flushSync } from "react-dom"
 import { useRouter } from "next/navigation"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
-import { waitForSessionEnvironmentReady } from "@/lib/provisionSessionEnvironment"
 import { CheckCircle, Copy, ExternalLink, Loader2, Mail, Upload, X, Sparkles } from "lucide-react"
 
 import { useAuth } from "@/components/auth-provider"
@@ -105,7 +103,14 @@ export function InviteCandidateModal({
         assessment_id: selectedAssessmentId,
         status: "pending",
       })
-      const data = await res.json()
+      // Safely parse response — guard against non-JSON (plain-text error) responses
+      let data: any
+      const rawText = await res.text()
+      try {
+        data = JSON.parse(rawText)
+      } catch {
+        throw new Error(rawText || `Server error (${res.status})`)
+      }
       if (data.success) {
         const assessment = availableAssessments.find((a: any) => a.id === selectedAssessmentId)
         const assessmentUrl =
@@ -117,21 +122,16 @@ export function InviteCandidateModal({
           assessmentUrl,
           assessmentName: assessment?.jobTitle || assessment?.role || "Assessment",
         }
-        flushSync(() => {
-          setVariantMeta(data.data.variantMeta ?? null)
-          setProvisionContext({ sessionId: data.data.id, assessmentId: selectedAssessmentId, payload })
-          setStep("provisioning")
-        })
+        // Container is already provisioned and confirmed ready by the backend
+        // (POST /api/sessions provisions inline before returning). Go straight to success.
+        setVariantMeta(data.data.variantMeta ?? null)
+        setInvitedSession(payload)
+        setStep("success")
         setInviting(false)
-        try {
-          await waitForSessionEnvironmentReady({ sessionId: data.data.id, assessmentId: selectedAssessmentId })
-          setInvitedSession(payload)
-          setStep("success")
-          setProvisionContext(null)
-          onSuccess?.()
-        } catch (e: unknown) {
-          setProvisionError(e instanceof Error ? e.message : "Environment failed to start")
-        }
+        onSuccess?.()
+        // Auto-close after 3 seconds so the recruiter sees the confirmation
+        // briefly, then the modal dismisses itself.
+        setTimeout(() => onOpenChange(false), 3000)
         return
       } else {
         setError(data.error || "Failed to create invitation")
@@ -233,34 +233,28 @@ export function InviteCandidateModal({
                 <p className="text-zinc-500 text-xs">{invitedSession.assessmentName}</p>
               </div>
             </div>
-            <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 space-y-3">
-              <div>
-                <p className="text-zinc-500 text-xs uppercase tracking-widest mb-1">Assessment link</p>
-                <code className="block text-xs text-emerald-300 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 break-all">{url}</code>
-              </div>
-              <div className="flex gap-2">
-                <Button size="sm" variant="outline" className="gap-1.5 border-zinc-700 text-zinc-300 hover:text-white" onClick={() => navigator.clipboard.writeText(url)}>
-                  <Copy className="h-3.5 w-3.5" /> Copy link
-                </Button>
-                <Button size="sm" variant="outline" className="gap-1.5 border-zinc-700 text-zinc-300 hover:text-white" asChild>
-                  <a href={url} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-3.5 w-3.5" /> Open</a>
-                </Button>
-              </div>
-              <div>
-                <p className="text-zinc-500 text-xs uppercase tracking-widest mb-1">Session code</p>
-                <div className="flex items-center gap-2">
-                  <code className="text-sm font-mono text-white bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-1.5">{code}</code>
-                  <Button size="sm" variant="ghost" className="text-zinc-400 hover:text-white" onClick={() => navigator.clipboard.writeText(code)}>
-                    <Copy className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            </div>
             {invitedSession.emailDelivered
-              ? <p className="text-zinc-600 text-xs">An email was sent to {email} with this link.</p>
-              : <p className="text-amber-500/80 text-xs">Email not configured — share the link manually.</p>
+              ? <p className="text-zinc-500 text-sm">An invite email has been sent to <span className="text-white font-medium">{email}</span>.</p>
+              : (
+                // Email not configured — show link for manual sharing (local/testing only)
+                <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 space-y-3">
+                  <p className="text-amber-400/80 text-xs">Email not configured — share the link manually.</p>
+                  <div>
+                    <p className="text-zinc-500 text-xs uppercase tracking-widest mb-1">Assessment link</p>
+                    <code className="block text-xs text-emerald-300 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 break-all">{url}</code>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" className="gap-1.5 border-zinc-700 text-zinc-300 hover:text-white" onClick={() => navigator.clipboard.writeText(url)}>
+                      <Copy className="h-3.5 w-3.5" /> Copy link
+                    </Button>
+                    <Button size="sm" variant="outline" className="gap-1.5 border-zinc-700 text-zinc-300 hover:text-white" asChild>
+                      <a href={url} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-3.5 w-3.5" /> Open</a>
+                    </Button>
+                  </div>
+                </div>
+              )
             }
-            <Button onClick={() => { onOpenChange(false); onSuccess?.() }} className="w-full bg-zinc-800 hover:bg-zinc-700 text-white border-0">Done</Button>
+            <Button onClick={() => onOpenChange(false)} className="w-full bg-zinc-800 hover:bg-zinc-700 text-white border-0">Done</Button>
           </div>
         </DialogContent>
       </Dialog>

@@ -299,7 +299,7 @@ export default function BulkInvitePage() {
       }
     }
 
-    // ── Step 2: Create a session for each valid candidate ─────────────────────
+    // ── Step 2: Create a session for each valid candidate (parallel) ──────────
     let sent = 0
     const total = validCandidates.length
     const deadlineDate = new Date()
@@ -308,23 +308,23 @@ export default function BulkInvitePage() {
       : deadlineDays
     deadlineDate.setDate(deadlineDate.getDate() + daysToAdd)
 
-    for (const candidate of validCandidates) {
-      try {
-        await api.post("/api/sessions", {
-          candidate_name: candidate.name || candidate.email.split("@")[0],
-          candidate_email: candidate.email,
-          time_limit: 3600,
-          expires_at: deadlineDate.toISOString(),
-          assessment_id: assessmentId,
-          status: "pending",
-        })
-        sent++
-      } catch { /* continue */ }
-
-      setSentCount(sent)
-      setSendingProgress(Math.round(((sent) / total) * 100))
-      await new Promise(r => setTimeout(r, 80))
-    }
+    await Promise.allSettled(
+      validCandidates.map(async (candidate) => {
+        try {
+          await api.post("/api/sessions", {
+            candidate_name: candidate.name || candidate.email.split("@")[0],
+            candidate_email: candidate.email,
+            time_limit: 3600,
+            expires_at: deadlineDate.toISOString(),
+            assessment_id: assessmentId,
+            status: "pending",
+          })
+          sent++
+        } catch { /* continue */ }
+        setSentCount(sent)
+        setSendingProgress(Math.round((sent / total) * 100))
+      })
+    )
 
     setFinalSentCount(sent)
     setIsSending(false)

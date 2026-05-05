@@ -578,10 +578,28 @@ export default function AssessmentPage({
             }))
           : [];
         
+        // Derive a short, clean title from the raw template title.
+        // Backend generates titles like "Float precision bug: The session rate is..."
+        // or "The /api/v1/therapists/:id/profile endpoint introduces an N+1 query: it fetches..."
+        // We want just "Float precision bug" or "N+1 Query" etc.
+        const rawTitle = template.title || `Task ${index + 1}`;
+        const colonSpaceIdx = rawTitle.indexOf(': ');
+        let shortTitle: string;
+        if (colonSpaceIdx > 0 && colonSpaceIdx < 45) {
+          // "Bug type: long description" → use only the prefix
+          shortTitle = rawTitle.substring(0, colonSpaceIdx).trim();
+        } else {
+          // Long title without clear prefix — truncate at word boundary
+          shortTitle = rawTitle.length > 52 ? rawTitle.substring(0, 52).trim() + '…' : rawTitle;
+        }
+        // Capitalise first letter
+        shortTitle = shortTitle.charAt(0).toUpperCase() + shortTitle.slice(1);
+
         const problem = {
           id: index + 1,
-          title: template.title || `Assessment ${index + 1}`,
-          description,
+          title: shortTitle,
+          description: template.title !== shortTitle ? rawTitle : description, // show full original as description when we shortened it
+          _fullDescription: description,
           difficulty: assessmentMeta?.level === 'Senior' ? 'Hard' : 
                       assessmentMeta?.level === 'Mid' ? 'Medium' : 'Easy',
           requirements: hasTasks 
@@ -2552,7 +2570,7 @@ export default function AssessmentPage({
         </div>
 
         {/* Main Layout */}
-        <div className="flex-1 flex gap-1 sm:gap-2 p-1 sm:p-2 min-h-0 overflow-hidden">
+        <div className="flex-1 flex gap-1 sm:gap-2 p-1 sm:p-2 min-h-0 overflow-hidden relative">
           
           {/* Left Sidebar - Navigation Menu */}
           <div className={`${isSidebarCollapsed ? 'w-16' : 'w-56'} border border-zinc-800 bg-zinc-950/70 backdrop-blur-xl rounded-xl flex flex-col shrink-0 transition-all duration-300`}>
@@ -2793,7 +2811,7 @@ export default function AssessmentPage({
                             {problem.difficulty}
                           </span>
                         </div>
-                        <p className="text-zinc-300 text-xs sm:text-sm mb-4 line-clamp-3">{problem.description}</p>
+                        <p className="text-zinc-300 text-xs sm:text-sm mb-4 line-clamp-3">{(problem as any)._fullDescription || problem.description}</p>
                         <div className="flex flex-col gap-2 mt-4">
                           {/* Code Challenge: Show Code button */}
                           {isCodeChallenge && (
@@ -3272,9 +3290,15 @@ export default function AssessmentPage({
               )}
             </div>
           )}
-          {/* AI Assistant Panel — inline right column */}
+          {/* AI Assistant Panel — overlay on IDE tab, inline column on other tabs */}
           {isAIPanelOpen && (
-            <div className="w-[380px] shrink-0 border-l border-zinc-800 overflow-hidden flex flex-col">
+            <div className={
+              activeTab === 'ide'
+                // On the IDE tab: float as an absolute overlay so it doesn't squeeze code-server
+                ? "absolute right-0 top-0 bottom-0 z-20 w-[400px] border-l border-zinc-800 bg-zinc-950/95 backdrop-blur-sm shadow-2xl overflow-hidden flex flex-col"
+                // On other tabs: normal inline right column
+                : "w-[380px] shrink-0 border-l border-zinc-800 overflow-hidden flex flex-col"
+            }>
               <AIAssistantPanel
                 sessionId={sessionData?.id}
                 currentProblemIndex={currentProblem}

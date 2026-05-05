@@ -6,6 +6,10 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
+// Allow this route up to 5 minutes — the /api/sessions endpoint runs
+// Server B (LLM generation) + Azure container provisioning which takes 2-3 min.
+export const maxDuration = 300;
+
 // Backend URL - only used server-side, never exposed to client
 const BACKEND_URL = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001';
 
@@ -149,9 +153,26 @@ async function proxyRequest(
     
     // Get response body
     const responseBody = await response.text();
-    
+
+    // If the backend returned a non-2xx status with a plain-text (non-JSON) body,
+    // wrap it in a JSON envelope so the frontend can always call JSON.parse safely.
+    let finalBody = responseBody;
+    if (response.status >= 400) {
+      try {
+        JSON.parse(responseBody); // already JSON — leave it alone
+      } catch {
+        // Plain text (e.g. Express default "Internal Server Error") — wrap it
+        finalBody = JSON.stringify({
+          success: false,
+          error: responseBody.trim() || `Backend error (${response.status})`,
+          _source: 'proxy-wrapper',
+        });
+        console.error(`[API Proxy] Backend returned non-JSON ${response.status} for ${method} /api/${pathSegments.join('/')}: ${responseBody.slice(0, 200)}`);
+      }
+    }
+
     // Create response with same status and headers
-    const proxiedResponse = new NextResponse(responseBody, {
+    const proxiedResponse = new NextResponse(finalBody, {
       status: response.status,
       statusText: response.statusText,
     });

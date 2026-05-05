@@ -23,6 +23,11 @@ const nextConfig = {
   compiler: {
     removeConsole: process.env.NODE_ENV === 'production' ? true : false,
   },
+  // NOTE: /api/* rewrites removed intentionally.
+  // All API requests are now handled by app/api/[...path]/route.ts which:
+  //  - Has a 5-minute maxDuration (needed for the ~3 min POST /api/sessions invite flow)
+  //  - Catches ECONNRESET / fetch failures and returns JSON 502 instead of plain-text 500
+  //  - Wraps any non-JSON backend error in a JSON envelope so the frontend can always parse it
   async headers() {
     return [
       {
