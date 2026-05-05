@@ -22,7 +22,7 @@ export function LandingFooter() {
       <LandingPageSection className="pt-20 pb-12" innerClassName="grid gap-12 md:grid-cols-12">
         <div className="md:col-span-5">
           <div className="flex items-center gap-2.5">
-            <PromoraMark size={28} className="text-foreground" />
+            <PromoraMark size={28} variant="onDark" className="text-foreground" />
             <span className="font-brand text-lg font-medium tracking-tight text-foreground">
               Promora
             </span>
