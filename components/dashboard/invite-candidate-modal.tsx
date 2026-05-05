@@ -8,7 +8,6 @@ import { api } from "@/lib/api"
 import { CheckCircle, Copy, ExternalLink, Loader2, Mail, Upload, X, Sparkles } from "lucide-react"
 
 import { useAuth } from "@/components/auth-provider"
-import { motion, AnimatePresence } from "framer-motion"
 
 interface InviteCandidateModalProps {
   open: boolean
@@ -33,7 +32,7 @@ export function InviteCandidateModal({
   const { user } = useAuth()
   const router = useRouter()
 
-  const [step, setStep] = useState<"form" | "provisioning" | "success">("form")
+  const [step, setStep] = useState<"form" | "success">("form")
   const [name, setName] = useState(candidate?.name || "")
   const [email, setEmail] = useState(candidate?.email || "")
   const [selectedAssessmentId, setSelectedAssessmentId] = useState(defaultAssessmentId || "")
@@ -44,9 +43,6 @@ export function InviteCandidateModal({
   const [inviting, setInviting] = useState(false)
   const [error, setError] = useState("")
   const [invitedSession, setInvitedSession] = useState<any>(null)
-  const [provisionError, setProvisionError] = useState<string | null>(null)
-  const [provisionContext, setProvisionContext] = useState<{ sessionId: string; assessmentId: string; payload: any } | null>(null)
-  const [variantMeta, setVariantMeta] = useState<{ variantIndex: number; scenarioName: string; fileCount: number; issueCount: number } | null>(null)
 
   useEffect(() => {
     if (open) {
@@ -66,9 +62,6 @@ export function InviteCandidateModal({
       setTimeLimit(60)
       setError("")
       setInvitedSession(null)
-      setProvisionError(null)
-      setProvisionContext(null)
-      setVariantMeta(null)
     }
   }, [open])
 
@@ -124,7 +117,6 @@ export function InviteCandidateModal({
         }
         // Container is already provisioned and confirmed ready by the backend
         // (POST /api/sessions provisions inline before returning). Go straight to success.
-        setVariantMeta(data.data.variantMeta ?? null)
         setInvitedSession(payload)
         setStep("success")
         setInviting(false)
@@ -141,79 +133,6 @@ export function InviteCandidateModal({
     } finally {
       setInviting(false)
     }
-  }
-
-  // ── Provisioning screen ────────────────────────────────────────────────────
-  if (step === "provisioning") {
-    const agentsDone = !!variantMeta
-    const inviteDone = agentsDone
-    const envFailed  = !!provisionError
-
-    const steps = [
-      {
-        label: "Agents launched in parallel",
-        sub: agentsDone ? `Variant ${(variantMeta?.variantIndex ?? 0) + 1} ready` : "Running…",
-        done: agentsDone,
-        spinning: !agentsDone,
-      },
-      {
-        label: "Invite sent",
-        sub: null,
-        done: inviteDone,
-        spinning: false,
-      },
-      {
-        label: "Creating environment",
-        sub: null,
-        done: false,
-        spinning: !envFailed,
-        error: envFailed,
-      },
-    ]
-
-    return (
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="bg-[#0d0d1a] border border-zinc-800/60 text-white max-w-sm p-0 overflow-hidden rounded-2xl [&>button]:hidden">
-          <DialogTitle className="sr-only">Preparing Assessment</DialogTitle>
-          <div className="px-6 py-6 space-y-4">
-            <div className="space-y-3">
-              {steps.map((s, i) => (
-                <div key={i} className="flex items-center gap-3">
-                  <div className="flex-shrink-0 w-5 flex items-center justify-center">
-                    {s.error ? (
-                      <div className="h-2 w-2 rounded-full bg-red-400" />
-                    ) : s.done ? (
-                      <div className="h-2 w-2 rounded-full bg-emerald-400" />
-                    ) : s.spinning ? (
-                      <Loader2 className="h-3.5 w-3.5 text-violet-400 animate-spin" />
-                    ) : (
-                      <div className="h-2 w-2 rounded-full bg-zinc-700" />
-                    )}
-                  </div>
-                  <div>
-                    <p className={`text-sm ${s.done || s.spinning ? "text-white" : "text-zinc-600"}`}>{s.label}</p>
-                    {s.sub && <p className="text-[11px] text-zinc-500">{s.sub}</p>}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {provisionError && (
-              <div className="flex gap-2 pt-1">
-                <Button size="sm" onClick={() => {
-                  if (!provisionContext) return
-                  setProvisionError(null)
-                  waitForSessionEnvironmentReady({ sessionId: provisionContext.sessionId, assessmentId: provisionContext.assessmentId })
-                    .then(() => { setInvitedSession(provisionContext.payload); setStep("success"); setProvisionContext(null); onSuccess?.() })
-                    .catch((e: unknown) => setProvisionError(e instanceof Error ? e.message : "Failed"))
-                }} className="flex-1 bg-violet-600 hover:bg-violet-700 text-white border-0 rounded-xl">Retry</Button>
-                <Button size="sm" variant="outline" onClick={() => onOpenChange(false)} className="flex-1 border-zinc-700 text-zinc-300 rounded-xl">Close</Button>
-              </div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
-    )
   }
 
   // ── Success screen ─────────────────────────────────────────────────────────
