@@ -7,7 +7,7 @@ export function getSiteUrl(): string {
 }
 
 export const SITE_TITLE =
-  "Promora AI | Hiring assessments that measure how candidates use AI"
+  "Promora — See exactly how your next hire works with AI."
 
 export const SITE_DESCRIPTION =
   "Promora AI measures how candidates use AI tools across coding, writing, and analysis—not just final output. PromptIQ scores AI collaboration for hiring teams."

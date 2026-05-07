@@ -49,11 +49,11 @@ export const metadata: Metadata = {
   applicationName: "Promora AI",
   icons: {
     icon: [
-      { url: "/promora-mark-black.svg", type: "image/svg+xml", sizes: "any" },
+      { url: "/icon.svg", type: "image/svg+xml", sizes: "any" },
       { url: "/favicon.ico", sizes: "48x48" },
     ],
-    shortcut: "/promora-mark-black.svg",
-    apple: "/promora-mark-black.svg",
+    shortcut: "/icon.svg",
+    apple: "/icon.svg",
   },
   openGraph: {
     title: SITE_TITLE,

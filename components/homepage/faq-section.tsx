@@ -31,7 +31,7 @@ const faqs = [
   },
   {
     q: "What does this cost?",
-    a: "We price per assessment, not per seat. Early teams get flat-rate pilots. Book a demo and we'll scope something that fits your hiring volume — no six-figure contracts to start.",
+    a: "$149/mo for 5 assessments. $449/mo for 15. Enterprise pricing available for high-volume teams. Need more than your plan includes? $39 per additional assessment. No hidden fees, no per-seat pricing, no setup costs.",
   },
 ]
 

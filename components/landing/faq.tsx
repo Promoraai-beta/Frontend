@@ -31,7 +31,7 @@ const faqs = [
   },
   {
     q: "What does this cost?",
-    a: "Free to try. Per-assessment pricing once you're running real candidates, with volume tiers for teams hiring at scale. See the pricing section for details.",
+    a: "$149/mo for 5 assessments. $449/mo for 15. Enterprise pricing available for high-volume teams. Need more than your plan includes? $39 per additional assessment. No hidden fees, no per-seat pricing, no setup costs.",
   },
 ]
 

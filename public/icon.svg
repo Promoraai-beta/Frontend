@@ -1,20 +1,10 @@
-<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!-- Background: White rounded square with subtle gradient -->
-  <rect width="32" height="32" rx="6" fill="url(#gradient)"/>
-  <defs>
-    <linearGradient id="gradient" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#ffffff"/>
-      <stop offset="50%" stop-color="#e4e4e7"/>
-      <stop offset="100%" stop-color="#a1a1aa"/>
-    </linearGradient>
-  </defs>
-  <!-- Sparkles/Stars icon (Promora logo) - centered -->
-  <g transform="translate(8, 8)">
-    <!-- Main sparkle/star -->
-    <path d="M8 2L9.09 5.26L12.36 6.35L9.09 7.44L8 10.7L6.91 7.44L3.64 6.35L6.91 5.26L8 2Z" fill="#000000"/>
-    <!-- Small sparkles around -->
-    <path d="M2 4L2.5 5.5L4 6L2.5 6.5L2 8L1.5 6.5L0 6L1.5 5.5L2 4Z" fill="#000000" opacity="0.8"/>
-    <path d="M14 4L14.5 5.5L16 6L14.5 6.5L14 8L13.5 6.5L12 6L13.5 5.5L14 4Z" fill="#000000" opacity="0.8"/>
-    <path d="M8 12L8.5 13L9.5 13L8.5 14L8 15L7.5 14L6.5 13L7.5 13L8 12Z" fill="#000000" opacity="0.6"/>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 328 366" width="328" height="366">
+  <title>Promora</title>
+  <g fill="#000000" fill-rule="nonzero">
+    <path d="M 41.0 93.0 L 38.0 98.0 L 25.0 147.0 L 26.0 156.0 L 34.0 165.0 L 44.0 169.0 L 181.0 169.0 L 185.0 176.0 L 183.0 181.0 L 73.0 254.0 L 68.0 259.0 L 63.0 269.0 L 63.0 279.0 L 67.0 286.0 L 109.0 323.0 L 119.0 324.0 L 128.0 320.0 L 137.0 310.0 L 202.0 205.0 L 207.0 204.0 L 211.0 207.0 L 197.0 331.0 L 202.0 339.0 L 209.0 340.0 L 241.0 326.0 L 247.0 318.0 L 248.0 305.0 L 236.0 229.0 L 226.0 201.0 L 206.0 169.0 L 179.0 143.0 L 147.0 124.0 L 64.0 89.0 L 52.0 88.0 Z"/>
+    <path d="M 202.0 40.0 L 200.0 46.0 L 207.0 95.0 L 217.0 126.0 L 228.0 147.0 L 242.0 166.0 L 258.0 181.0 L 274.0 190.0 L 295.0 198.0 L 300.0 198.0 L 302.0 189.0 L 299.0 167.0 L 296.0 161.0 L 292.0 159.0 L 252.0 158.0 L 250.0 154.0 L 251.0 149.0 L 283.0 125.0 L 282.0 117.0 L 268.0 94.0 L 262.0 93.0 L 238.0 128.0 L 234.0 129.0 L 231.0 126.0 L 237.0 70.0 L 236.0 61.0 L 230.0 54.0 L 210.0 41.0 Z"/>
+    <path d="M 108.0 31.0 L 105.0 35.0 L 105.0 42.0 L 110.0 50.0 L 179.0 125.0 L 188.0 132.0 L 191.0 132.0 L 203.0 123.0 L 203.0 116.0 L 158.0 33.0 L 147.0 25.0 Z"/>
+    <path d="M 249.0 189.0 L 240.0 200.0 L 240.0 208.0 L 277.0 276.0 L 284.0 277.0 L 288.0 271.0 L 296.0 249.0 L 296.0 239.0 L 262.0 199.0 L 252.0 189.0 Z"/>
   </g>
 </svg>
