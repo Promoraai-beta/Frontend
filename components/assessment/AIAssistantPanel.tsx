@@ -163,7 +163,7 @@ function parseSegments(text: string): Segment[] {
   while ((m = fence.exec(text)) !== null) {
     if (m.index > last) segs.push({ type: 'text', content: text.slice(last, m.index) });
     const body = m[2];
-    const fm = body.match(/^\/\/\s*File:\s*(.+)\n/);
+    const fm = body.match(/^(?:\/\/|#)\s*File:\s*(.+)\n/);
     segs.push({ type: 'code', language: m[1] || '', filePath: fm ? fm[1].trim() : null, content: fm ? body.slice(fm[0].length) : body });
     last = m.index + m[0].length;
   }
@@ -200,6 +200,9 @@ function CodeBlock({ language, filePath, content, sessionId, model, onCopyTracke
   const [applied, setApplied] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
   const [flash, setFlash] = useState(false);
+  // When no filePath from AI, let the user type one
+  const [showPathInput, setShowPathInput] = useState(false);
+  const [manualPath, setManualPath] = useState('');
   const lines = content.trimEnd().split('\n');
 
   const copy = useCallback(async () => {
@@ -208,22 +211,35 @@ function CodeBlock({ language, filePath, content, sessionId, model, onCopyTracke
     onCopyTracked?.(content, model);
   }, [content, model, onCopyTracked]);
 
-  const apply = useCallback(async () => {
-    if (!sessionId || !filePath) return;
+  const doApply = useCallback(async (targetPath: string) => {
+    if (!sessionId || !targetPath.trim()) return;
+    const cleanPath = targetPath.trim().replace(/^\/+/, '');
     setApplying(true); setApplyError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/files/${filePath}`, {
+      const res = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/files/${cleanPath}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content }),
       });
       if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error((d as any).error || `HTTP ${res.status}`); }
       setFlash(true); setApplied(true);
+      setShowPathInput(false);
       setTimeout(() => setFlash(false), 400);
       setTimeout(() => setApplied(false), 5000);
-      onApplyTracked?.(content, filePath, model);
+      onApplyTracked?.(content, cleanPath, model);
     } catch (e: any) { setApplyError(e.message); }
     finally { setApplying(false); }
-  }, [sessionId, filePath, content, model, onApplyTracked]);
+  }, [sessionId, content, model, onApplyTracked]);
+
+  const apply = useCallback(async () => {
+    if (filePath) {
+      // filePath known from AI — apply directly
+      await doApply(filePath);
+    } else {
+      // No filePath — toggle the path input row
+      setShowPathInput(v => !v);
+      setApplyError(null);
+    }
+  }, [filePath, doApply]);
 
   const lineCount = lines.length;
   const header = `${language || 'code'} · ${lineCount} line${lineCount !== 1 ? 's' : ''}`;
@@ -244,7 +260,8 @@ function CodeBlock({ language, filePath, content, sessionId, model, onCopyTracke
           {filePath || header}
         </span>
         <div style={{ flex: 1 }} />
-        {filePath && sessionId && (
+        {/* Apply button — always show when sessionId is set */}
+        {sessionId && (
           <button onClick={apply} disabled={applying} style={{
             background: applied ? A.accent : A.edLine,
             color: applied ? A.paper : A.edFg,
@@ -268,6 +285,43 @@ function CodeBlock({ language, filePath, content, sessionId, model, onCopyTracke
           {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
+      {/* File path input — shown when no filePath and user clicked Apply */}
+      {showPathInput && !filePath && sessionId && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '6px 12px', background: A.paperDeep,
+          borderBottom: `1px solid ${A.edLine}`,
+        }}>
+          <span style={{ fontSize: 10, color: A.edFg3, fontFamily: '"JetBrains Mono", monospace', whiteSpace: 'nowrap' }}>
+            Apply to file:
+          </span>
+          <input
+            autoFocus
+            type="text"
+            placeholder="e.g. src/main.py"
+            value={manualPath}
+            onChange={e => setManualPath(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') doApply(manualPath); if (e.key === 'Escape') setShowPathInput(false); }}
+            style={{
+              flex: 1, background: A.ed, border: `1px solid ${A.ruleStr}`,
+              borderRadius: 3, padding: '3px 8px', color: A.ink,
+              fontSize: 11, fontFamily: '"JetBrains Mono", monospace', outline: 'none',
+            }}
+          />
+          <button
+            onClick={() => doApply(manualPath)}
+            disabled={!manualPath.trim() || applying}
+            style={{
+              background: A.accent, color: A.paper, border: 'none',
+              padding: '3px 10px', borderRadius: 3, cursor: 'pointer',
+              fontSize: 10, fontFamily: '"JetBrains Mono", monospace',
+              opacity: !manualPath.trim() ? 0.5 : 1,
+            }}
+          >
+            {applying ? '…' : 'Go'}
+          </button>
+        </div>
+      )}
       {/* lines */}
       <div style={{ padding: '10px 0 12px', overflowX: 'auto' }}>
         {lines.map((line, i) => (

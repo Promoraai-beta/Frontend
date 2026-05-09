@@ -702,6 +702,7 @@ export default function AssessmentPage({
   const chunkIndexRef = useRef<number>(0); // Track video chunk index
   const screenRecorderRef = useRef<MediaRecorder | null>(null);
   const webcamRecorderRef = useRef<MediaRecorder | null>(null);
+  const isStoppingRef = useRef<boolean>(false); // Set true during stopRecording to silence final-flush errors
   const screenChunkIndexRef = useRef<number>(0);
   const webcamChunkIndexRef = useRef<number>(0);
   const wsRef = useRef<WebSocket | null>(null); // WebSocket for live streaming
@@ -862,7 +863,7 @@ export default function AssessmentPage({
         console.error('❌ Screen share became invalid:', validation.reason);
         clearInterval(interval);
         screenShareMonitorIntervalRef.current = null;
-        alert(`Screen share violation detected:\n${validation.reason}\n\nRecording will stop.`);
+        console.warn('Screen share violation — stopping recording:', validation.reason);
         stopRecording();
       }
     }, 5000);
@@ -1275,6 +1276,14 @@ export default function AssessmentPage({
 
     return () => clearInterval(interval);
   }, [startTime, isSubmitting, initialTimeLimit]);
+
+  // ── Auto-stop screen share + webcam when session is terminated by violation ──
+  useEffect(() => {
+    if (sessionTerminated) {
+      stopRecording();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionTerminated]);
 
   // Start recording with both screen and webcam streams
   // ONLY called for recruiter assessments
@@ -1708,19 +1717,19 @@ export default function AssessmentPage({
           audioTracks: screenStream?.getAudioTracks().length,
         });
 
-        // Check if screen share ended
+        // Silently ignore the final flush fired after stopRecording() tears down streams
+        if (isStoppingRef.current) return;
+
+        // Check if screen share ended unexpectedly (user revoked permission mid-session)
         if (!screenStream?.active || screenStream?.getVideoTracks()[0]?.readyState !== 'live') {
-          console.error('❌ Screen stream is no longer active!');
-          console.error('Stream active:', screenStream?.active);
-          console.error('Video track readyState:', screenStream?.getVideoTracks()[0]?.readyState);
-          alert('Screen sharing stopped. Stopping recording...');
+          console.warn('⚠️ Screen stream ended unexpectedly — stopping recording');
           stopRecording();
           return;
         }
 
         // Check recorder state
         if (screenRecorder.state !== 'recording') {
-          console.error('❌ MediaRecorder not recording! State:', screenRecorder.state);
+          console.warn('⚠️ Screen recorder no longer recording, state:', screenRecorder.state);
           return;
         }
 
@@ -1744,7 +1753,7 @@ export default function AssessmentPage({
             
             if (!hasNonZeroData) {
               console.error(`❌ Chunk ${currentChunkIndex}: Contains only zeros - recording may have failed`);
-              alert('Recording failed to start. Please refresh and try again.');
+              console.error(`❌ Chunk ${currentChunkIndex}: Contains only zeros — recording may have failed`);
               stopRecording();
               return;
             }
@@ -1761,12 +1770,14 @@ export default function AssessmentPage({
       // Enhanced recorder error handler
       screenRecorder.onerror = (event) => {
         console.error('❌ Screen recorder error:', event);
-        alert('Recording error occurred. Please refresh the page.');
         stopRecording();
       };
 
       // Enhanced webcam recording handler with detailed logging
       webcamRecorder.ondataavailable = async (event) => {
+        // Silently ignore the final flush fired after stopRecording() tears down streams
+        if (isStoppingRef.current) return;
+
         if (!sessionData?.id) {
           console.warn('Webcam chunk: No session ID');
           return;
@@ -1788,7 +1799,7 @@ export default function AssessmentPage({
 
         // Check recorder state
         if (webcamRecorder.state !== 'recording') {
-          console.error('❌ Webcam recorder not recording! State:', webcamRecorder.state);
+          console.warn('⚠️ Webcam recorder no longer recording, state:', webcamRecorder.state);
           return;
         }
 
@@ -1847,7 +1858,7 @@ export default function AssessmentPage({
       // Add screen share ended handler (enhanced version)
       screenVideoTrack.addEventListener('ended', () => {
         console.error('❌ Screen share track ended');
-        alert('Screen sharing stopped. Recording will stop.');
+        console.warn('Screen share track ended — stopping recording');
         stopRecording();
       });
 
@@ -1884,12 +1895,15 @@ export default function AssessmentPage({
   };
 
   const stopRecording = () => {
+    // Signal ondataavailable handlers to ignore the final flush (streams are being torn down)
+    isStoppingRef.current = true;
+
     // Clear screen share monitoring interval
     if (screenShareMonitorIntervalRef.current) {
       clearInterval(screenShareMonitorIntervalRef.current);
       screenShareMonitorIntervalRef.current = null;
     }
-    
+
     if (screenRecorderRef.current) {
       screenRecorderRef.current.stop();
     }
@@ -1908,6 +1922,8 @@ export default function AssessmentPage({
       wsRef.current = null;
     }
     setIsRecording(false);
+    // Reset flag after a short delay (final ondataavailable fires synchronously before this)
+    setTimeout(() => { isStoppingRef.current = false; }, 500);
   };
 
   const handleSendMessage = async (externalMessage?: string) => {
@@ -2949,7 +2965,9 @@ export default function AssessmentPage({
               dbUrl={
                 (sessionData as any).db_url ||
                 ((sessionData as any).containerUrl
-                  ? (sessionData as any).containerUrl.replace(/:(\d+)\/?$/, ':5050')
+                  // Route through code-server's built-in reverse proxy (/proxy/5050/)
+                  // so the browser never has to open port 5050 directly (which is firewalled).
+                  ? (sessionData as any).containerUrl.replace(/\/?$/, '/proxy/5050/')
                   : null)
               }
               onBackToTasks={() => handleAssessmentTabChange('task')}
