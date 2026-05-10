@@ -188,6 +188,20 @@ function InlineMd({ text }: { text: string }) {
   );
 }
 
+// ── Language → file extension map (for auto-matching) ────────────────────────
+const LANG_EXTS: Record<string, string[]> = {
+  typescript: ['.ts', '.tsx'], ts: ['.ts', '.tsx'], tsx: ['.tsx', '.ts'],
+  javascript: ['.js', '.jsx'], js: ['.js', '.jsx'], jsx: ['.jsx', '.js'],
+  python: ['.py'], py: ['.py'],
+  css: ['.css'], scss: ['.scss'], sass: ['.sass'],
+  html: ['.html', '.htm'],
+  json: ['.json'],
+  yaml: ['.yaml', '.yml'], yml: ['.yaml', '.yml'],
+  sql: ['.sql'],
+  bash: ['.sh'], sh: ['.sh'],
+  go: ['.go'], rust: ['.rs'], ruby: ['.rb'], java: ['.java'],
+};
+
 // ── Code block ────────────────────────────────────────────────────────────────
 function CodeBlock({ language, filePath, content, sessionId, model, onCopyTracked, onApplyTracked }: {
   language: string; filePath: string | null; content: string;
@@ -199,10 +213,12 @@ function CodeBlock({ language, filePath, content, sessionId, model, onCopyTracke
   const [applying, setApplying] = useState(false);
   const [applied, setApplied] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
+  const [appliedPath, setAppliedPath] = useState<string | null>(null);
   const [flash, setFlash] = useState(false);
-  // When no filePath from AI, let the user type one
-  const [showPathInput, setShowPathInput] = useState(false);
-  const [manualPath, setManualPath] = useState('');
+  // Smart file picker state (replaces the old manual text input)
+  const [loadingFiles, setLoadingFiles] = useState(false);
+  const [showFilePicker, setShowFilePicker] = useState(false);
+  const [candidateFiles, setCandidateFiles] = useState<string[]>([]);
   const lines = content.trimEnd().split('\n');
 
   const copy = useCallback(async () => {
@@ -221,25 +237,79 @@ function CodeBlock({ language, filePath, content, sessionId, model, onCopyTracke
         body: JSON.stringify({ content }),
       });
       if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error((d as any).error || `HTTP ${res.status}`); }
-      setFlash(true); setApplied(true);
-      setShowPathInput(false);
+      setFlash(true); setApplied(true); setAppliedPath(cleanPath);
+      setShowFilePicker(false);
       setTimeout(() => setFlash(false), 400);
-      setTimeout(() => setApplied(false), 5000);
+      setTimeout(() => { setApplied(false); setAppliedPath(null); }, 8000);
       onApplyTracked?.(content, cleanPath, model);
     } catch (e: any) { setApplyError(e.message); }
     finally { setApplying(false); }
   }, [sessionId, content, model, onApplyTracked]);
 
   const apply = useCallback(async () => {
-    if (filePath) {
-      // filePath known from AI — apply directly
-      await doApply(filePath);
-    } else {
-      // No filePath — toggle the path input row
-      setShowPathInput(v => !v);
-      setApplyError(null);
+    if (!sessionId) return;
+    setLoadingFiles(true);
+    setApplyError(null);
+
+    try {
+      // Always fetch workspace file list — used both to validate AI-provided paths
+      // and to build the picker when no path is given.
+      const res = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/files`);
+      const allFiles: string[] = res.ok ? ((await res.json()).files ?? []) : [];
+
+      if (filePath) {
+        // AI provided a // File: path — validate it against the real workspace.
+        const cleanFp = filePath.replace(/^\/+/, '').trim();
+
+        // 1. Exact match (most common happy-path)
+        const exact = allFiles.find(f => f === cleanFp);
+        if (exact) { await doApply(exact); return; }
+
+        // 2. Case-insensitive match (handles UPPERCASE paths the AI sometimes emits)
+        const lower = cleanFp.toLowerCase();
+        const ciMatches = allFiles.filter(f => f.toLowerCase() === lower);
+        if (ciMatches.length === 1) { await doApply(ciMatches[0]); return; }
+
+        // 3. Match on the filename component only
+        const basename = cleanFp.split('/').pop()?.toLowerCase() ?? '';
+        const basenameMatches = basename
+          ? allFiles.filter(f => f.split('/').pop()?.toLowerCase() === basename)
+          : [];
+
+        // Build the best candidate set for the picker
+        const candidates =
+          ciMatches.length > 0 ? ciMatches :
+          basenameMatches.length > 0 ? basenameMatches :
+          (() => {
+            // Fallback: filter by language extension so the picker is still useful
+            const exts = LANG_EXTS[language.toLowerCase()] ?? [];
+            return exts.length > 0 ? allFiles.filter(f => exts.some(ext => f.endsWith(ext))) : [];
+          })();
+
+        setCandidateFiles(candidates.length > 0 ? candidates : allFiles.slice(0, 30));
+        setShowFilePicker(true);
+      } else {
+        // No filePath from AI — filter by language extension and show picker
+        const exts = LANG_EXTS[language.toLowerCase()] ?? [];
+        const matched = exts.length > 0
+          ? allFiles.filter(f => exts.some(ext => f.endsWith(ext)))
+          : allFiles;
+        // Always show picker — candidate must consciously choose the file
+        setCandidateFiles(matched.length > 0 ? matched : allFiles.slice(0, 30));
+        setShowFilePicker(true);
+      }
+    } catch {
+      if (filePath) {
+        // Network error — fall back to direct apply with the AI path
+        await doApply(filePath);
+        return;
+      }
+      setCandidateFiles([]);
+      setShowFilePicker(true);
+    } finally {
+      setLoadingFiles(false);
     }
-  }, [filePath, doApply]);
+  }, [filePath, language, sessionId, doApply]);
 
   const lineCount = lines.length;
   const header = `${language || 'code'} · ${lineCount} line${lineCount !== 1 ? 's' : ''}`;
@@ -262,16 +332,16 @@ function CodeBlock({ language, filePath, content, sessionId, model, onCopyTracke
         <div style={{ flex: 1 }} />
         {/* Apply button — always show when sessionId is set */}
         {sessionId && (
-          <button onClick={apply} disabled={applying} style={{
+          <button onClick={apply} disabled={applying || loadingFiles} style={{
             background: applied ? A.accent : A.edLine,
             color: applied ? A.paper : A.edFg,
             border: 'none', padding: '3px 10px', borderRadius: 3,
             fontSize: 10, fontFamily: '"JetBrains Mono", monospace', letterSpacing: '0.06em',
-            cursor: applying ? 'wait' : 'pointer',
+            cursor: (applying || loadingFiles) ? 'wait' : 'pointer',
             display: 'inline-flex', alignItems: 'center', gap: 5, textTransform: 'uppercase' as const,
             transition: 'all 180ms',
           }}>
-            {applying ? <Loader2 size={9} className="animate-spin" /> : applied ? <Check size={9} /> : <ChevronRight size={9} />}
+            {(applying || loadingFiles) ? <Loader2 size={9} className="animate-spin" /> : applied ? <Check size={9} /> : <ChevronRight size={9} />}
             {applied ? 'Applied' : 'Apply'}
           </button>
         )}
@@ -285,40 +355,43 @@ function CodeBlock({ language, filePath, content, sessionId, model, onCopyTracke
           {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
-      {/* File path input — shown when no filePath and user clicked Apply */}
-      {showPathInput && !filePath && sessionId && (
+      {/* File picker — shown when path is ambiguous (no filePath comment, or AI path didn't match a real file) */}
+      {showFilePicker && sessionId && (
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 8,
-          padding: '6px 12px', background: A.paperDeep,
+          padding: '8px 12px', background: A.paperDeep,
           borderBottom: `1px solid ${A.edLine}`,
         }}>
-          <span style={{ fontSize: 10, color: A.edFg3, fontFamily: '"JetBrains Mono", monospace', whiteSpace: 'nowrap' }}>
-            Apply to file:
-          </span>
-          <input
-            autoFocus
-            type="text"
-            placeholder="e.g. src/main.py"
-            value={manualPath}
-            onChange={e => setManualPath(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') doApply(manualPath); if (e.key === 'Escape') setShowPathInput(false); }}
-            style={{
-              flex: 1, background: A.ed, border: `1px solid ${A.ruleStr}`,
-              borderRadius: 3, padding: '3px 8px', color: A.ink,
-              fontSize: 11, fontFamily: '"JetBrains Mono", monospace', outline: 'none',
-            }}
-          />
-          <button
-            onClick={() => doApply(manualPath)}
-            disabled={!manualPath.trim() || applying}
-            style={{
-              background: A.accent, color: A.paper, border: 'none',
-              padding: '3px 10px', borderRadius: 3, cursor: 'pointer',
-              fontSize: 10, fontFamily: '"JetBrains Mono", monospace',
-              opacity: !manualPath.trim() ? 0.5 : 1,
-            }}
-          >
-            {applying ? '…' : 'Go'}
+          <div style={{ fontSize: 10, color: A.edFg3, fontFamily: '"JetBrains Mono", monospace', marginBottom: 6, letterSpacing: '0.1em', textTransform: 'uppercase' as const }}>
+            {filePath ? `"${filePath}" not found — choose file:` : 'Choose file to apply to:'}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3, maxHeight: 160, overflowY: 'auto' }}>
+            {candidateFiles.length === 0 ? (
+              <span style={{ fontSize: 11, color: A.edFg3, fontStyle: 'italic' }}>No matching files found in workspace.</span>
+            ) : (
+              candidateFiles.map(f => (
+                <button
+                  key={f}
+                  onClick={() => doApply(f)}
+                  disabled={applying}
+                  style={{
+                    textAlign: 'left', background: 'transparent', border: `1px solid ${A.edLine}`,
+                    borderRadius: 3, padding: '4px 8px', cursor: 'pointer',
+                    fontSize: 11, fontFamily: '"JetBrains Mono", monospace', color: A.edFg2,
+                    transition: 'all 120ms',
+                  }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = A.edLine; (e.currentTarget as HTMLElement).style.color = A.edFg; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = A.edFg2; }}
+                >
+                  {f}
+                </button>
+              ))
+            )}
+          </div>
+          <button onClick={() => setShowFilePicker(false)} style={{
+            marginTop: 6, background: 'transparent', border: 'none', cursor: 'pointer',
+            fontSize: 10, color: A.edFg3, fontFamily: '"JetBrains Mono", monospace', padding: 0,
+          }}>
+            ✕ cancel
           </button>
         </div>
       )}
@@ -331,6 +404,17 @@ function CodeBlock({ language, filePath, content, sessionId, model, onCopyTracke
           </div>
         ))}
       </div>
+      {/* Post-apply hint: file written — remind candidate to Revert if VS Code has unsaved changes */}
+      {applied && appliedPath && (
+        <div style={{ padding: '6px 14px', background: 'rgba(108,99,255,0.10)', borderTop: `1px solid ${A.edLine}`, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Check size={10} style={{ color: A.accent, flexShrink: 0 }} />
+          <span style={{ fontSize: 10, fontFamily: '"JetBrains Mono", monospace', color: A.ink2 }}>
+            Written to <span style={{ color: A.edFg }}>{appliedPath.split('/').pop()}</span>.
+            {' '}If the editor still shows the old version, open the file and press{' '}
+            <span style={{ color: A.edFg }}>⌘⇧P → Revert File</span>.
+          </span>
+        </div>
+      )}
       {applyError && <div style={{ padding: '6px 14px', background: 'rgba(248,113,113,0.08)', color: '#f87171', fontSize: 11, borderTop: `1px solid ${A.edLine}` }}>{applyError}</div>}
     </div>
   );

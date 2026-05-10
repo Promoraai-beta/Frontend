@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import AssessmentPage from '@/app/assessment/page';
 import InstructionsPage from './instructions';
@@ -185,19 +185,96 @@ export default function AssessmentWithCodePage() {
     }
   }, [sessionData]);
 
-  // No polling needed on the instructions page — containers are guaranteed ready
-  // before the invite is sent. The containerStatus state is read-only for UI display.
+  // ── Trigger on-demand provisioning as soon as the invite link is opened ────
+  // When the candidate opens the invite, immediately fire POST /provision so the
+  // container starts warming up in the background. The endpoint is idempotent —
+  // calling it more than once is safe.
+  useEffect(() => {
+    if (!sessionData?.id || hasStarted) return;
+    // Only trigger if container hasn't started provisioning yet
+    if (containerStatus !== 'pending') return;
+
+    console.log('[Provision] Triggering on-demand provisioning on page open…');
+    fetch(`${API_BASE_URL}/api/sessions/${sessionData.id}/provision`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    })
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        console.log('[Provision] Triggered:', body);
+        // Immediately reflect the provisioning state in the UI
+        if (body.containerStatus) setContainerStatus(body.containerStatus);
+      })
+      .catch((err) => console.error('[Provision] Failed to trigger:', err));
+  }, [sessionData?.id, containerStatus, hasStarted]);
+
+  // ── Poll container status while provisioning ─────────────────────────────────
+  // Check every 4 seconds until the container becomes ready (or fails).
+  // containerStatus is intentionally NOT in the dep array — we use a ref to read
+  // the latest value inside the interval so we don't recreate it on every poll tick.
+  const containerStatusRef = useRef(containerStatus);
+  useEffect(() => { containerStatusRef.current = containerStatus; }, [containerStatus]);
+
+  useEffect(() => {
+    if (!sessionCode || !sessionData?.id || hasStarted) return;
+    // Only start the poller when the container is actively provisioning.
+    // Read from state (not ref) here — this is the guard that decides whether
+    // to create the interval at all.
+    if (containerStatus !== 'pending' && containerStatus !== 'provisioning') return;
+
+    let attempts = 0;
+    const MAX_ATTEMPTS = 60; // 60 × 4 s = 4 minutes then give up
+
+    const pollInterval = setInterval(async () => {
+      // Stop if status changed externally (e.g. via the provision trigger)
+      const current = containerStatusRef.current;
+      if (current !== 'pending' && current !== 'provisioning') {
+        clearInterval(pollInterval);
+        return;
+      }
+
+      attempts++;
+      if (attempts >= MAX_ATTEMPTS) {
+        clearInterval(pollInterval);
+        console.warn('[Poll] Max attempts reached — treating container as ready');
+        setContainerStatus('ready');
+        return;
+      }
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/sessions/code/${sessionCode}`);
+        if (!res.ok) return;
+        const body = await res.json();
+        if (body.success && body.data) {
+          const newStatus: string | null = body.data.containerStatus ?? null;
+          setContainerStatus(newStatus);
+          setSessionData(body.data);
+          if (newStatus === 'ready' || newStatus === 'failed' || newStatus === null) {
+            clearInterval(pollInterval);
+          }
+        }
+      } catch (err) {
+        console.error('[Poll] Error checking container status:', err);
+      }
+    }, 4000);
+
+    return () => clearInterval(pollInterval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionCode, sessionData?.id, hasStarted]);
+  // ↑ containerStatus deliberately omitted — changing it must NOT recreate the interval
 
   const handleStartAssessment = async () => {
     if (!sessionData?.id) return;
 
     setIsStarting(true);
     setTemplateFilesReady(false);
-    
-    // Create AbortController for timeout
+
+    // Container is already provisioned by the time the candidate clicks Start
+    // (provisioning happened at invite-link-open). The /start call just marks the
+    // session active — it should complete in a few seconds. Use 30s timeout.
     const controller = new AbortController();
-    let timeoutId: NodeJS.Timeout | null = setTimeout(() => controller.abort(), 15000); // 15 second timeout
-    
+    let timeoutId: NodeJS.Timeout | null = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+
     try {
       const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionData.id}/start`, {
         method: 'POST',
@@ -272,10 +349,17 @@ export default function AssessmentWithCodePage() {
         setTemplateFilesReady(true);
         setHasStarted(true);
       } else {
-        console.error('Start session failed:', data.error);
+        // Backend returned success:false — provisioning failed
+        setError(data.error || 'Failed to start your environment. Please refresh and try again.');
+        setErrorType('unknown');
       }
     } catch (err: any) {
-      console.error('Error starting session:', err);
+      if (err.name === 'AbortError') {
+        setError('Environment setup timed out. Please refresh the page and try again.');
+      } else {
+        setError(err.message || 'Failed to start your environment. Please refresh and try again.');
+      }
+      setErrorType('unknown');
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
       setIsStarting(false);
@@ -425,35 +509,37 @@ export default function AssessmentWithCodePage() {
 
   // Show instructions page if session hasn't started yet
   if (!hasStarted && sessionData.status === 'pending') {
-    // Container still warming up — show a waiting screen with live polling dots
-    if (containerStatus === 'provisioning') {
+    // Candidate clicked "Start Assessment" — container is being provisioned on-demand.
+    // Show a rich loading screen while the backend provisions the ACI container (60–120s).
+    if (isStarting) {
       return (
         <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 p-4">
-          <Card className="max-w-md w-full border-blue-900/40 bg-gray-900/80 backdrop-blur-sm shadow-2xl">
-            <CardContent className="pt-8 pb-8">
-              <div className="flex flex-col items-center justify-center space-y-6 text-center">
-                <div className="relative">
-                  <div className="absolute inset-0 rounded-full bg-blue-500/20 blur-xl animate-pulse" />
-                  <div className="relative h-20 w-20 rounded-full bg-gradient-to-br from-blue-900/60 to-blue-700/40 border border-blue-700/50 flex items-center justify-center">
-                    <ServerCog className="h-9 w-9 text-blue-400 animate-spin [animation-duration:3s]" />
-                  </div>
+          <div className="max-w-sm w-full text-center space-y-6">
+            {/* Spinner */}
+            <div className="flex justify-center">
+              <div className="relative">
+                <div className="absolute inset-0 rounded-full bg-emerald-500/20 blur-xl animate-pulse" />
+                <div className="relative h-20 w-20 rounded-full bg-gray-900 border border-emerald-800/50 flex items-center justify-center">
+                  <ServerCog className="h-9 w-9 text-emerald-400 animate-spin [animation-duration:3s]" />
                 </div>
-                <div className="space-y-2">
-                  <h3 className="text-xl font-semibold text-white">Preparing Your Environment</h3>
-                  <p className="text-sm text-gray-400 leading-relaxed max-w-xs">
-                    Your coding environment is being set up. This usually takes 1–3 minutes.
-                    The Start button will appear automatically when it's ready.
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="h-2 w-2 bg-blue-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
-                  <div className="h-2 w-2 bg-blue-500 rounded-full animate-bounce [animation-delay:-0.15s]" />
-                  <div className="h-2 w-2 bg-blue-500 rounded-full animate-bounce" />
-                </div>
-                <p className="text-xs text-gray-600">Checking every 5 seconds…</p>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+
+            {/* Text */}
+            <div className="space-y-2">
+              <h2 className="text-xl font-semibold text-white">Setting Up Your Environment</h2>
+              <p className="text-gray-500 text-sm">
+                This takes about 60–90 seconds. Your timer starts once it&apos;s ready.
+              </p>
+            </div>
+
+            {/* Bouncing dots */}
+            <div className="flex items-center justify-center gap-1.5">
+              <div className="h-1.5 w-1.5 bg-emerald-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
+              <div className="h-1.5 w-1.5 bg-emerald-500 rounded-full animate-bounce [animation-delay:-0.15s]" />
+              <div className="h-1.5 w-1.5 bg-emerald-500 rounded-full animate-bounce" />
+            </div>
+          </div>
         </div>
       );
     }
@@ -487,7 +573,9 @@ export default function AssessmentWithCodePage() {
       );
     }
 
-    // Container is ready (or not needed) — show the normal instructions + Start button
+    // Show the instructions page. The Start button is disabled until the container is ready.
+    // containerReady = true when containerStatus is 'ready' or null (no container needed).
+    const containerReady = containerStatus === 'ready' || containerStatus === null;
     return (
       <InstructionsPage
         sessionCode={sessionCode || ''}
@@ -495,6 +583,7 @@ export default function AssessmentWithCodePage() {
         timeLimit={sessionData.timeLimit || sessionData.time_limit || 3600}
         onStart={handleStartAssessment}
         isStarting={isStarting}
+        containerReady={containerReady}
         assessmentType={sessionData.assessment?.assessmentType || 'recruiter'}
         position={sessionData.assessment?.jobTitle || sessionData.assessment?.role || sessionData.assessmentMeta?.jobTitle || sessionData.assessmentMeta?.role}
         numProblems={

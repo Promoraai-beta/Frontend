@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Database, RefreshCw, ExternalLink, AlertCircle, ChevronRight } from 'lucide-react';
+import { Database, RefreshCw, AlertCircle, ChevronRight } from 'lucide-react';
 
 interface DatabaseTabViewProps {
   sessionId: string;
@@ -65,17 +65,6 @@ export default function DatabaseTabView({ sessionId, dbUrl, onBackToTasks }: Dat
         <span className="text-xs font-medium text-zinc-300">Database Explorer</span>
         <span className="text-xs text-zinc-600 font-mono">PostgreSQL · assessmentdb</span>
         <div className="flex-1" />
-        {dbUrl && (
-          <a
-            href={dbUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="p-1.5 text-zinc-500 hover:text-zinc-300 rounded transition-colors"
-            title="Open in new tab"
-          >
-            <ExternalLink className="h-3.5 w-3.5" />
-          </a>
-        )}
         <button
           onClick={reload}
           className="p-1.5 text-zinc-500 hover:text-zinc-300 rounded transition-colors"

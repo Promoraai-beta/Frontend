@@ -10,6 +10,8 @@ interface InstructionsPageProps {
   timeLimit?: number;
   onStart: () => void;
   isStarting: boolean;
+  /** Whether the coding environment container is fully provisioned and ready. */
+  containerReady?: boolean;
   assessmentType?: 'recruiter' | 'candidate';
   position?: string;
   numProblems?: number;
@@ -21,6 +23,7 @@ export default function InstructionsPage({
   timeLimit = 3600,
   onStart,
   isStarting,
+  containerReady = true,
   assessmentType = 'recruiter',
   position,
   numProblems = 3,
@@ -445,21 +448,44 @@ export default function InstructionsPage({
 
             {/* ── CTA ── */}
             <div style={{ textAlign: 'center' }}>
+              {/* Environment warming up — show a pulsing status pill above the button */}
+              {!containerReady && (
+                <div style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 8,
+                  padding: '8px 18px',
+                  borderRadius: 99,
+                  background: 'rgba(108,99,255,0.08)',
+                  border: '1px solid rgba(108,99,255,0.25)',
+                  marginBottom: 16,
+                }}>
+                  <div style={{
+                    width: 8, height: 8, borderRadius: '50%',
+                    background: '#6C63FF',
+                    boxShadow: '0 0 8px #6C63FF88',
+                    animation: 'pulse 1.5s ease-in-out infinite',
+                    flexShrink: 0,
+                  }} />
+                  <span style={{ fontSize: 13, color: '#A0A8C0', fontWeight: 500 }}>
+                    Preparing your environment… Start will unlock when ready
+                  </span>
+                </div>
+              )}
+
               <button
                 onClick={onStart}
-                disabled={!accepted || isStarting}
+                disabled={!accepted || isStarting || !containerReady}
                 style={{
                   display: 'inline-flex', alignItems: 'center', gap: 10,
                   padding: '16px 52px',
                   borderRadius: 12,
                   border: 'none',
                   fontSize: 17, fontWeight: 700,
-                  cursor: accepted && !isStarting ? 'pointer' : 'not-allowed',
-                  background: accepted
+                  cursor: accepted && !isStarting && containerReady ? 'pointer' : 'not-allowed',
+                  background: accepted && containerReady
                     ? 'linear-gradient(135deg, #6C63FF 0%, #4B44D6 100%)'
                     : 'rgba(255,255,255,0.06)',
-                  color: accepted ? '#fff' : '#4B5263',
-                  boxShadow: accepted ? '0 6px 28px rgba(108,99,255,0.4)' : 'none',
+                  color: accepted && containerReady ? '#fff' : '#4B5263',
+                  boxShadow: accepted && containerReady ? '0 6px 28px rgba(108,99,255,0.4)' : 'none',
                   transition: 'all 0.2s',
                   opacity: isStarting ? 0.8 : 1,
                   fontFamily: 'inherit',
@@ -477,6 +503,17 @@ export default function InstructionsPage({
                     }} />
                     Starting Assessment…
                   </>
+                ) : !containerReady ? (
+                  <>
+                    <div style={{
+                      width: 18, height: 18, borderRadius: '50%',
+                      border: '2.5px solid rgba(255,255,255,0.15)',
+                      borderTopColor: 'rgba(255,255,255,0.4)',
+                      animation: 'spin 1.2s linear infinite',
+                      flexShrink: 0,
+                    }} />
+                    Start Assessment
+                  </>
                 ) : (
                   <>
                     <Play size={17} style={{ fill: 'currentColor', flexShrink: 0 }} />
@@ -485,7 +522,7 @@ export default function InstructionsPage({
                 )}
               </button>
 
-              {!accepted && (
+              {!accepted && containerReady && (
                 <p style={{ fontSize: 13, color: '#4B5263', marginTop: 12 }}>
                   Check the box above to enable the Start button
                 </p>
@@ -497,6 +534,7 @@ export default function InstructionsPage({
 
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
         ::-webkit-scrollbar { width: 5px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.09); border-radius: 3px; }

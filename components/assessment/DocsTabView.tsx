@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { ExternalLink, RefreshCw, AlertCircle, ChevronRight } from 'lucide-react';
+import { RefreshCw, AlertCircle, ChevronRight, Info, X } from 'lucide-react';
 
 interface DocsTabViewProps {
   sessionId: string;
@@ -36,6 +36,7 @@ export default function DocsTabView({
   const [loading, setLoading] = useState(false);
   const [polling, setPolling] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [tipDismissed, setTipDismissed] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollAttemptsRef = useRef(0);
   const MAX_POLL_ATTEMPTS = 20; // 20 × 3s = 60s max wait
@@ -111,18 +112,6 @@ export default function DocsTabView({
           {taskTitle || 'Documentation Task'}
         </span>
         <div className="flex-1" />
-        {docsUrl && (
-          <a
-            href={docsUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            title="Open in Google Docs"
-            className="px-2 py-1 text-zinc-400 hover:text-zinc-200 text-xs border border-zinc-700 rounded hover:bg-zinc-800 flex items-center gap-1"
-          >
-            <ExternalLink className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Open</span>
-          </a>
-        )}
         <button
           onClick={onBackToTasks}
           className="px-2 py-1 text-zinc-400 hover:text-zinc-200 text-xs border border-zinc-700 rounded hover:bg-zinc-800 flex items-center gap-1"
@@ -135,13 +124,30 @@ export default function DocsTabView({
       {/* Body */}
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {docsUrl ? (
-          /* Doc ready — embed in iframe */
-          <iframe
-            src={toEmbedUrl(docsUrl)}
-            title="Google Docs"
-            className="flex-1 w-full min-h-[360px] border-0 bg-zinc-900"
-            allowFullScreen
-          />
+          /* Doc ready — tip banner + iframe */
+          <>
+            {!tipDismissed && (
+              <div className="flex items-start gap-2.5 px-3 py-2 bg-amber-500/10 border-b border-amber-500/20 shrink-0">
+                <Info className="h-3.5 w-3.5 text-amber-400 mt-0.5 shrink-0" />
+                <p className="text-xs text-amber-300/90 leading-relaxed flex-1">
+                  <strong className="font-semibold">No Google account needed.</strong> If a sign-in dialog appears inside the doc, press <kbd className="px-1 py-0.5 rounded bg-amber-500/20 font-mono text-amber-200 text-[10px]">Esc</kbd> or click outside it to dismiss — you can edit freely without signing in.
+                </p>
+                <button
+                  onClick={() => setTipDismissed(true)}
+                  className="text-amber-500/60 hover:text-amber-400 shrink-0 mt-0.5"
+                  title="Dismiss"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+            <iframe
+              src={toEmbedUrl(docsUrl)}
+              title="Google Docs"
+              className="flex-1 w-full min-h-[360px] border-0 bg-zinc-900"
+              allowFullScreen
+            />
+          </>
         ) : (
           /* Doc not yet provisioned — loading / manual fallback */
           <div className="flex-1 flex flex-col items-center justify-center gap-6 p-8">
