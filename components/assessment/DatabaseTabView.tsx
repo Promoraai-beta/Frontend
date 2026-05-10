@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Database, RefreshCw, AlertCircle, ChevronRight } from 'lucide-react';
+import { Database, RefreshCw, AlertCircle, ChevronRight, ExternalLink } from 'lucide-react';
 
 interface DatabaseTabViewProps {
   sessionId: string;
